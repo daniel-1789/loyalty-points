@@ -1,3 +1,19 @@
+# Maven build output
+target/
+dependency-reduced-pom.xml
+
+# Local scratch / screenshots
+Screenshot*.png
+
+# IDE
+.idea/
+*.iml
+
+# SQLite database files (created at runtime)
+*.db
+*.db-journal
+*.sqlite
+
 # Compiled class file
 *.class
 
