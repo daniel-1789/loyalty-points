@@ -37,9 +37,8 @@ Thin but logically real. Lazily created on first earn (upsert) — no separate c
 
 ### `point_lots`
 One row per earning event. The heart of the model.
-- `id` (PK)
+- `purchase_id` (TEXT, PK) — the store's purchase identifier; natural key, one lot per purchase
 - `customer_id` (FK -> customers.id)
-- `purchase_id` (TEXT) — ties the lot to the purchase that created it (needed for refunds)
 - `points_earned` (INTEGER) — original amount, immutable
 - `points_remaining` (INTEGER) — decremented as points are redeemed (mutable-lots approach, see decision)
 - `earned_at` (DATE/INSTANT)
@@ -161,6 +160,21 @@ The fix requires attributing each redemption to the specific lot it consumes —
 the per-lot tracking our chosen model already has. Table shape can't avoid that complexity, so a
 flat single table is strictly worse: same complexity, plus silent wrong answers.
 
+## Decision: purchase_id is the primary key of point_lots (natural key)
+
+A purchase is a one-time event with a store-provided identifier, so `purchase_id` is the
+**primary key** of `point_lots` — a natural key, mirroring how `customers.id` is `"alice"`
+rather than a synthetic integer. This gives one lot per purchase for free, prevents double-earn,
+and is what refunds key off. A duplicate earn is rejected with **HTTP 409** (enforced by the PK
+constraint plus an explicit service check for a clean domain error).
+
+- Chose a **natural key** over a surrogate `id` for consistency with `customers` and because the
+  store owns the identifier. Trade-off: a surrogate key would insulate internal references if the
+  store ever reformats its IDs, and would let `point_lots` also hold non-purchase rows (e.g. refund
+  adjustments) — so refund adjustments will live in their own table, keeping `point_lots` pure.
+- Chose **reject (409)** over **idempotent replay** (returning the existing lot) for explicitness.
+  Idempotent replay is a reasonable "with more time" alternative for at-least-once delivery.
+
 ## Other decisions / simplifying assumptions
 
 - **Derived, not stored:** no stored balance, no stored "expired" column. Both are computed
@@ -169,6 +183,11 @@ flat single table is strictly worse: same complexity, plus silent wrong answers.
   over time without manipulating the system clock — important since we'll test time-based
   behaviour heavily. To be noted as an assumption in the README.
 - **Customer upsert on first earn** — no dedicated customer-creation flow.
+- **Expiry boundary is exclusive:** a lot is valid while `asOf < expires_at`, i.e. points are
+  usable up to but not including the expiry date.
+- **Leap-year expiry** is handled by `java.time` (`LocalDate.plusMonths(12)`): earning on
+  2024-02-29 expires 2025-02-28. No hand-rolled date math.
+- **Unknown customer balance is 0** — we don't distinguish "never seen" from "zero points".
 
 ## Open questions (to resolve)
 

@@ -14,10 +14,11 @@ CREATE TABLE IF NOT EXISTS customers (
 
 -- Point lots: one row per earning event. The heart of the model.
 -- points_remaining is decremented as points are redeemed (oldest-expiry-first).
+-- purchase_id is the natural primary key (the store's purchase identifier): one lot per
+-- purchase. This prevents double-earn and is what refunds key off.
 CREATE TABLE IF NOT EXISTS point_lots (
-    id               INTEGER PRIMARY KEY,
+    purchase_id      TEXT    PRIMARY KEY NOT NULL,
     customer_id      TEXT    NOT NULL REFERENCES customers(id),
-    purchase_id      TEXT    NOT NULL,         -- the purchase that created this lot (for refunds)
     points_earned    INTEGER NOT NULL,         -- original grant, immutable
     points_remaining INTEGER NOT NULL,         -- decremented on redemption
     earned_at        TEXT    NOT NULL,         -- ISO-8601 date

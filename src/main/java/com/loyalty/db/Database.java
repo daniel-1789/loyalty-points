@@ -41,6 +41,44 @@ public class Database implements AutoCloseable {
         return connection;
     }
 
+    /**
+     * Run {@code work} inside a single transaction, committing on success and rolling back if it
+     * throws. Used for operations that touch multiple rows/tables and must be atomic (e.g. earn:
+     * upsert the customer and insert the lot together; redeem: decrement several lots).
+     */
+    public <T> T transaction(java.util.function.Supplier<T> work) {
+        try {
+            connection.setAutoCommit(false);
+        } catch (SQLException e) {
+            throw new DataAccessException("Failed to begin transaction", e);
+        }
+        try {
+            T result = work.get();
+            connection.commit();
+            return result;
+        } catch (RuntimeException e) {
+            rollbackQuietly();
+            throw e;
+        } catch (SQLException e) {
+            rollbackQuietly();
+            throw new DataAccessException("Failed to commit transaction", e);
+        } finally {
+            try {
+                connection.setAutoCommit(true);
+            } catch (SQLException ignored) {
+                // best effort; connection is closed on shutdown anyway
+            }
+        }
+    }
+
+    private void rollbackQuietly() {
+        try {
+            connection.rollback();
+        } catch (SQLException ignored) {
+            // nothing actionable
+        }
+    }
+
     /** Lightweight connectivity check for the health endpoint. */
     public boolean ping() {
         try (Statement s = connection.createStatement();
@@ -59,9 +97,10 @@ public class Database implements AutoCloseable {
     }
 
     private void applySchema() throws SQLException {
-        String ddl = readResource(SCHEMA_RESOURCE);
-        // JDBC executes one statement per call; split the script on ';'. Safe here because our
-        // schema contains no semicolons inside string literals or identifiers.
+        // Strip `--` line comments first, then split on ';'. JDBC executes one statement per call,
+        // and stripping comments keeps a semicolon inside a comment from breaking the split. (Our
+        // schema has no `--` or ';' inside string literals, so this stays correct.)
+        String ddl = readResource(SCHEMA_RESOURCE).replaceAll("(?m)--.*$", "");
         try (Statement s = connection.createStatement()) {
             for (String statement : ddl.split(";")) {
                 String trimmed = statement.strip();
