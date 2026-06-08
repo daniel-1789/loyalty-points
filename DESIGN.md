@@ -186,6 +186,28 @@ constraint plus an explicit service check for a clean domain error).
   (well-formed request, unfulfillable given state). Expired points simply aren't counted, so they
   can't be redeemed.
 
+## Refunds (extended)
+
+A refund of purchase `P` (granted `G`, still-available `R`) reverses the full grant:
+
+1. **Void P's own lot** — set `points_remaining = 0` and stamp `refunded_at` (which also drops it
+   from tier spend as of that date).
+2. **Reclaim the spent portion** (`G - R`) from the customer's current balance, oldest-expiry-first.
+3. **Any shortfall becomes debt** — added to `customers.point_debt`.
+
+**Negative balance is allowed and settled-on-earn:** the debt is permanent (you can't outwait it),
+but the next earn pays it down first (reducing the new lot's spendable `points_remaining`, while its
+`points_earned` stays full so tier still reflects the real spend). Once paid, it stays paid.
+
+Key invariant that prevents the debt from "resurrecting": because step 2 reclaims from current
+balance before recording debt, **`point_debt > 0` implies no available points remain** — so there's
+never a positive lot left to expire and re-open the debt. Net balance = `SUM(active remaining) - point_debt`.
+
+- Expired-unused points create no debt (they were already worth 0).
+- Unknown / wrong-customer purchase -> `404`; already-refunded -> `409`.
+- Considered and rejected: full-grant clawback regardless of expiry (punitive — would create debt
+  for points that expired worthless).
+
 ## Tier (extended)
 
 Customers have a tier based on rolling 12-month spend. Thresholds live in a `tiers` table

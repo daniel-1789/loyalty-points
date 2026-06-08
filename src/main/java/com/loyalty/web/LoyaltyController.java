@@ -4,6 +4,7 @@ import com.loyalty.service.BalanceResponse;
 import com.loyalty.service.EarnResult;
 import com.loyalty.service.LoyaltyService;
 import com.loyalty.service.RedeemResult;
+import com.loyalty.service.RefundResult;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 
@@ -25,6 +26,7 @@ public class LoyaltyController {
         app.post("/customers/{id}/purchases", this::earn);
         app.get("/customers/{id}/balance", this::balance);
         app.post("/customers/{id}/redemptions", this::redeem);
+        app.post("/customers/{id}/purchases/{purchaseId}/refund", this::refund);
     }
 
     /** Reward catalog. */
@@ -42,6 +44,13 @@ public class LoyaltyController {
         RedeemRequest req = ctx.bodyAsClass(RedeemRequest.class);
         RedeemResult result = service.redeem(ctx.pathParam("id"), req.rewardId(), req.date());
         ctx.status(201).json(result);
+    }
+
+    /** Refund: reverse a purchase's points (optional ?asOf=YYYY-MM-DD). */
+    private void refund(Context ctx) {
+        RefundResult result = service.refund(
+                ctx.pathParam("id"), ctx.pathParam("purchaseId"), parseAsOf(ctx));
+        ctx.json(result);
     }
 
     /** Earn: record a purchase and award points. */

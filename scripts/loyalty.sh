@@ -9,6 +9,7 @@
 #   scripts/loyalty.sh earn    <user> <purchase-id> <amount> [date]
 #   scripts/loyalty.sh balance <user> [asOf]
 #   scripts/loyalty.sh redeem  <user> <reward-id> [date]
+#   scripts/loyalty.sh refund  <user> <purchase-id> [date]
 #   scripts/loyalty.sh demo    <user>
 #
 # Examples:
@@ -36,7 +37,7 @@ pp() {
 }
 
 usage() {
-    sed -n '3,21p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
 }
 
@@ -71,6 +72,13 @@ redeem() {
         -H 'Content-Type: application/json' -d "$body" | pp
 }
 
+refund() {
+    local user="$1" purchase="$2" date="${3:-}"
+    local url="$BASE_URL/customers/$user/purchases/$purchase/refund"
+    [[ -n "$date" ]] && url="$url?asOf=$date"
+    curl -s -X POST "$url" | pp
+}
+
 # Self-contained walkthrough showing points accruing and then expiring over time.
 demo() {
     local user="${1:-demo-user}"
@@ -96,6 +104,7 @@ case "$cmd" in
     earn)    [[ $# -ge 3 ]] || usage 1; earn "$@" ;;
     balance) [[ $# -ge 1 ]] || usage 1; balance "$@" ;;
     redeem)  [[ $# -ge 2 ]] || usage 1; redeem "$@" ;;
+    refund)  [[ $# -ge 2 ]] || usage 1; refund "$@" ;;
     demo)    demo "$@" ;;
     -h|--help|help|"") usage 0 ;;
     *) echo "Unknown command: $cmd" >&2; usage 1 ;;

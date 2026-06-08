@@ -231,4 +231,70 @@ class LoyaltyServiceTest {
         RedeemResult result = service.redeem("alice", "free-coffee", LocalDate.of(2025, 6, 1));
         assertEquals(0, result.balanceRemaining());
     }
+
+    @Test
+    void refundOfUnredeemedPurchaseRemovesPointsWithoutDebt() {
+        service.earn("dan", "order-1", new BigDecimal("600"), LocalDate.of(2025, 1, 1));
+
+        RefundResult result = service.refund("dan", "order-1", LocalDate.of(2025, 6, 1));
+
+        assertEquals(600, result.pointsReversed());
+        assertEquals(0, result.debtIncurred());
+        assertEquals(0, result.balanceRemaining());
+        // Refunded purchase no longer counts toward tier spend.
+        assertEquals("Silver", tierOf("dan", LocalDate.of(2025, 6, 1)));
+    }
+
+    @Test
+    void refundAfterSpendingDrivesBalanceNegative() {
+        service.earn("dan", "order-1", new BigDecimal("600"), LocalDate.of(2025, 1, 1));
+        service.redeem("dan", "free-coffee", LocalDate.of(2025, 6, 1)); // spend 500, 100 left in lot
+
+        RefundResult result = service.refund("dan", "order-1", LocalDate.of(2025, 7, 1));
+
+        assertEquals(100, result.pointsReversed()); // the 100 still in the lot
+        assertEquals(500, result.debtIncurred());   // the 500 already spent -> debt
+        assertEquals(-500, result.balanceRemaining());
+    }
+
+    @Test
+    void earningPaysDownDebtAndItStaysSettled() {
+        service.earn("dan", "order-1", new BigDecimal("600"), LocalDate.of(2025, 1, 1));
+        service.redeem("dan", "free-coffee", LocalDate.of(2025, 6, 1));
+        service.refund("dan", "order-1", LocalDate.of(2025, 7, 1)); // balance now -500
+
+        // Earning 800 pays off the 500 debt, leaving 300 spendable.
+        service.earn("dan", "order-2", new BigDecimal("800"), LocalDate.of(2025, 8, 1)); // expires 2026-08-01
+        assertEquals(300, service.balance("dan", LocalDate.of(2025, 9, 1)).balance());
+
+        // Even after those points expire, the debt stays settled (no resurrection).
+        assertEquals(0, service.balance("dan", LocalDate.of(2026, 9, 1)).balance());
+    }
+
+    @Test
+    void refundReclaimsFromOtherLotsBeforeCreatingDebt() {
+        service.earn("dan", "order-1", new BigDecimal("500"), LocalDate.of(2025, 1, 1)); // expires first
+        service.earn("dan", "order-2", new BigDecimal("500"), LocalDate.of(2025, 6, 1));
+        service.redeem("dan", "free-coffee", LocalDate.of(2025, 7, 1)); // 500 consumes order-1 fully
+
+        // Refund order-1 (its 500 were spent); reclaim from order-2's balance instead of debt.
+        RefundResult result = service.refund("dan", "order-1", LocalDate.of(2025, 7, 1));
+        assertEquals(500, result.pointsReversed());
+        assertEquals(0, result.debtIncurred());
+        assertEquals(0, result.balanceRemaining());
+    }
+
+    @Test
+    void refundUnknownPurchaseThrows() {
+        assertThrows(PurchaseNotFoundException.class,
+                () -> service.refund("dan", "nope", LocalDate.of(2025, 6, 1)));
+    }
+
+    @Test
+    void refundTwiceThrows() {
+        service.earn("dan", "order-1", new BigDecimal("100"), LocalDate.of(2025, 1, 1));
+        service.refund("dan", "order-1", LocalDate.of(2025, 6, 1));
+        assertThrows(AlreadyRefundedException.class,
+                () -> service.refund("dan", "order-1", LocalDate.of(2025, 6, 1)));
+    }
 }

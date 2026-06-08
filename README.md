@@ -11,9 +11,11 @@ earned.
 - **Redeem** — spend points on a reward from the catalog, consuming points closest to expiry first.
 - **Expiry** — points expire 12 months after they're earned and stop counting automatically.
 - **Tier** (extended) — Silver / Gold / Platinum from rolling 12-month spend.
+- **Refunds** (extended) — reverse a purchase's points; the balance can go negative and is paid
+  down by future earnings.
 
-Not yet built: **refunds** (extended) and a dedicated **CLI** (stretch) — though
-`scripts/loyalty.sh` covers manual interaction. See [Design](#design) for what's next.
+Not yet built: a dedicated **CLI** (stretch) — though `scripts/loyalty.sh` covers manual
+interaction. See [Design](#design) for more.
 
 ## Tech stack
 
@@ -75,10 +77,11 @@ that defaults to today — this lets you simulate history and expiry without cha
 | `POST` | `/customers/{id}/purchases` | **Earn** — body `{"purchaseId","amount","date?"}` |
 | `GET` | `/customers/{id}/balance?asOf=` | **Balance** + tier |
 | `POST` | `/customers/{id}/redemptions` | **Redeem** — body `{"rewardId","date?"}` |
+| `POST` | `/customers/{id}/purchases/{purchaseId}/refund?asOf=` | **Refund** — reverse a purchase |
 
-**Status codes:** `201` on earn/redeem, `200` on reads, `400` invalid input, `404` unknown reward,
-`409` duplicate purchase, `422` insufficient balance, `500` unexpected. Every response (including
-errors) is JSON.
+**Status codes:** `201` on earn/redeem, `200` on reads/refund, `400` invalid input,
+`404` unknown reward/purchase, `409` duplicate purchase or already-refunded, `422` insufficient
+balance, `500` unexpected. Every response (including errors) is JSON.
 
 **Examples:**
 
@@ -106,6 +109,7 @@ curl -X POST localhost:7070/customers/alice/redemptions \
 scripts/loyalty.sh earn alice order-1 100 2025-01-01
 scripts/loyalty.sh balance alice 2025-06-01
 scripts/loyalty.sh redeem alice free-coffee 2025-06-01
+scripts/loyalty.sh refund alice order-1 2025-07-01
 scripts/loyalty.sh rewards            # catalog
 scripts/loyalty.sh tiers              # thresholds
 scripts/loyalty.sh demo alice         # earns + balances showing points expire over time
@@ -135,10 +139,11 @@ event; redemption and expiry are attributed to specific lots, which is what make
 
 | Table | Purpose |
 |---|---|
-| `customers` | Thin; lazily created on first earn (no separate create flow). |
-| `point_lots` | One row per earning event — **the heart of the model**. Keyed by `purchase_id` (the store's identifier). Carries `points_earned`, a mutable `points_remaining`, `earned_at`, and `expires_at`. |
+| `customers` | Thin; lazily created on first earn (no separate create flow). Holds `point_debt` (outstanding refund debt, paid down as the customer earns). |
+| `point_lots` | One row per earning event — **the heart of the model**. Keyed by `purchase_id` (the store's identifier). Carries `points_earned`, a mutable `points_remaining`, `earned_at`, `expires_at`, and `refunded_at`. |
 | `rewards` | The redemption catalog (seeded). |
 | `redemptions` | Log of redemptions (response + audit). |
+| `refunds` | Log of refunds (audit + one-refund-per-purchase guard). |
 | `tiers` | Tier thresholds (seeded Silver 0 / Gold 500 / Platinum 2500) — data, not code, so they're changeable. |
 
 - **Balance** = `SUM(points_remaining)` over lots where `earned_at <= asOf < expires_at`.
@@ -146,6 +151,9 @@ event; redemption and expiry are attributed to specific lots, which is what make
   decrementing `points_remaining`, all in one transaction.
 - **Tier** = highest threshold met by **gross points earned** in the trailing 12 months — so
   redeeming points never lowers a tier (it reflects spend, not balance).
+- **Refund** reverses a purchase: void its lot, reclaim the already-spent portion from current
+  balance, and record any shortfall as debt. The balance can go negative; the next earn pays the
+  debt down first (and a refund removes that purchase from tier spend, so it can lower a tier).
 
 ### A decision with a real trade-off: mutable lots vs. an append-only ledger
 
@@ -167,12 +175,12 @@ design that fully satisfies the requirements; the ledger is the natural "with mo
 
 ### What I'd add with more time
 
-- **Refunds** — clawback keyed on `purchase_id`, allowing a negative balance you earn back
-  (design already worked out in `DESIGN.md`); this also reduces rolling spend, so it can lower a tier.
-- **Append-only event ledger** for full auditability (the trade-off above).
+- **Append-only event ledger** for full auditability (the trade-off above) — would also let
+  balance queries time-travel across redemptions/refunds, which mutable lots can't.
 - **Flyway/Liquibase** migrations instead of hand-applied `schema.sql`.
 - **Idempotent earn replay** (return the existing lot) instead of `409`, for at-least-once delivery.
 - A connection pool (instead of a single shared connection) for real concurrency.
+- A dedicated **CLI** (the stretch goal); `scripts/loyalty.sh` currently covers manual use.
 
 ### AI tools
 

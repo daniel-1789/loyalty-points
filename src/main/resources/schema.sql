@@ -8,8 +8,9 @@
 
 -- Customers: thin, lazily created (upserted) on first earn. No dedicated create flow.
 CREATE TABLE IF NOT EXISTS customers (
-    id   TEXT PRIMARY KEY,           -- identity passed in requests, e.g. "alice"
-    name TEXT                        -- placeholder for a real customer record
+    id         TEXT PRIMARY KEY,     -- identity passed in requests, e.g. "alice"
+    name       TEXT,                 -- placeholder for a real customer record
+    point_debt INTEGER NOT NULL DEFAULT 0  -- outstanding refund debt; paid down as the customer earns
 );
 
 -- Point lots: one row per earning event. The heart of the model.
@@ -20,9 +21,10 @@ CREATE TABLE IF NOT EXISTS point_lots (
     purchase_id      TEXT    PRIMARY KEY NOT NULL,
     customer_id      TEXT    NOT NULL REFERENCES customers(id),
     points_earned    INTEGER NOT NULL,         -- original grant, immutable
-    points_remaining INTEGER NOT NULL,         -- decremented on redemption
+    points_remaining INTEGER NOT NULL,         -- decremented on redemption; zeroed on refund
     earned_at        TEXT    NOT NULL,         -- ISO-8601 date
-    expires_at       TEXT    NOT NULL          -- earned_at + 12 months
+    expires_at       TEXT    NOT NULL,         -- earned_at + 12 months
+    refunded_at      TEXT                      -- set when the purchase is refunded (else NULL)
 );
 
 CREATE INDEX IF NOT EXISTS idx_point_lots_customer ON point_lots(customer_id, expires_at);
@@ -55,8 +57,14 @@ CREATE TABLE IF NOT EXISTS redemptions (
     redeemed_at TEXT    NOT NULL                -- ISO-8601 date
 );
 
--- NOTE: refund handling (clawback / non-expiring negative adjustment) is added later,
--- when we implement the Refunds extended requirement. See DESIGN.md.
+-- Refunds log: one row per refunded purchase (audit + double-refund guard via the PK).
+CREATE TABLE IF NOT EXISTS refunds (
+    purchase_id     TEXT    PRIMARY KEY REFERENCES point_lots(purchase_id),
+    customer_id     TEXT    NOT NULL REFERENCES customers(id),
+    points_reversed INTEGER NOT NULL,   -- points removed from balance (voided + reclaimed)
+    debt_incurred   INTEGER NOT NULL,   -- portion that couldn't be covered -> added to point_debt
+    refunded_at     TEXT    NOT NULL    -- ISO-8601 date
+);
 
 -- Seed a small reward catalog. INSERT OR IGNORE keeps startup idempotent.
 INSERT OR IGNORE INTO rewards(id, name, cost_points) VALUES

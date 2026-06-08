@@ -5,9 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.loyalty.db.Database;
+import com.loyalty.service.AlreadyRefundedException;
 import com.loyalty.service.DuplicatePurchaseException;
 import com.loyalty.service.InsufficientBalanceException;
 import com.loyalty.service.LoyaltyService;
+import com.loyalty.service.PurchaseNotFoundException;
 import com.loyalty.service.RewardNotFoundException;
 import com.loyalty.web.LoyaltyController;
 import io.javalin.Javalin;
@@ -60,9 +62,15 @@ public class App {
         app.exception(DuplicatePurchaseException.class, (e, ctx) ->
                 ctx.status(409).json(Map.of("error", String.valueOf(e.getMessage()))));
 
-        // Redeeming an unknown reward -> 404.
+        // Unknown reward, or refunding a purchase that doesn't exist for the customer -> 404.
         app.exception(RewardNotFoundException.class, (e, ctx) ->
                 ctx.status(404).json(Map.of("error", String.valueOf(e.getMessage()))));
+        app.exception(PurchaseNotFoundException.class, (e, ctx) ->
+                ctx.status(404).json(Map.of("error", String.valueOf(e.getMessage()))));
+
+        // Refunding an already-refunded purchase -> 409.
+        app.exception(AlreadyRefundedException.class, (e, ctx) ->
+                ctx.status(409).json(Map.of("error", String.valueOf(e.getMessage()))));
 
         // Redeeming more than the available balance -> 422 (well-formed but unfulfillable).
         app.exception(InsufficientBalanceException.class, (e, ctx) ->

@@ -4,6 +4,7 @@ import com.loyalty.db.CustomerDao;
 import com.loyalty.db.Database;
 import com.loyalty.db.PointLotDao;
 import com.loyalty.db.RedemptionDao;
+import com.loyalty.db.RefundDao;
 import com.loyalty.db.RewardDao;
 import com.loyalty.db.TierDao;
 import com.loyalty.model.PointLot;
@@ -33,6 +34,7 @@ public class LoyaltyService {
     private final PointLotDao pointLots;
     private final RewardDao rewards;
     private final RedemptionDao redemptions;
+    private final RefundDao refunds;
     private final TierDao tiers;
 
     public LoyaltyService(Database db) {
@@ -41,6 +43,7 @@ public class LoyaltyService {
         this.pointLots = new PointLotDao(db.connection());
         this.rewards = new RewardDao(db.connection());
         this.redemptions = new RedemptionDao(db.connection());
+        this.refunds = new RefundDao(db.connection());
         this.tiers = new TierDao(db.connection());
     }
 
@@ -71,9 +74,20 @@ public class LoyaltyService {
                 throw new DuplicatePurchaseException(purchaseId);
             }
             customers.upsert(customerId);
-            pointLots.insert(new PointLot(customerId, purchaseId, points, points, when, expires));
-            log.info("Earned {} points for customer '{}' (purchase '{}', earned {} expires {})",
-                    points, customerId, purchaseId, when, expires);
+
+            // New points pay down any outstanding refund debt first; the rest becomes spendable.
+            int debt = customers.getDebt(customerId);
+            int appliedToDebt = Math.min(points, debt);
+            if (appliedToDebt > 0) {
+                customers.setDebt(customerId, debt - appliedToDebt);
+            }
+            int remaining = points - appliedToDebt;
+
+            // points_earned stays the full amount (it's gross spend, which drives tier); only the
+            // spendable remainder is reduced by the debt paydown.
+            pointLots.insert(new PointLot(customerId, purchaseId, points, remaining, when, expires));
+            log.info("Earned {} points for customer '{}' (purchase '{}', earned {} expires {}); {} applied to debt",
+                    points, customerId, purchaseId, when, expires, appliedToDebt);
             return new EarnResult(customerId, purchaseId, points, when, expires);
         });
     }
@@ -87,7 +101,7 @@ public class LoyaltyService {
     public BalanceResponse balance(String customerId, LocalDate asOf) {
         requireText(customerId, "customerId");
         LocalDate when = asOf != null ? asOf : LocalDate.now();
-        int balance = pointLots.balance(customerId, when);
+        int balance = pointLots.balance(customerId, when) - customers.getDebt(customerId);
         int spend = pointLots.spendSince(customerId, when.minusMonths(TIER_WINDOW_MONTHS), when);
         String tier = tiers.tierForSpend(spend);
         log.debug("Balance for customer '{}' as of {} = {} (tier {}, {}-month spend {})",
@@ -124,24 +138,86 @@ public class LoyaltyService {
                 });
 
         return db.transaction(() -> {
-            int available = pointLots.balance(customerId, when);
+            int available = netBalance(customerId, when);
             if (available < reward.costPoints()) {
                 log.warn("Redeem denied for customer '{}': reward '{}' costs {}, only {} available (asOf {})",
                         customerId, rewardId, reward.costPoints(), available, when);
                 throw new InsufficientBalanceException(rewardId, reward.costPoints(), available);
             }
-            consumeOldestExpiryFirst(customerId, when, reward.costPoints());
+            int consumed = consumeUpTo(customerId, when, reward.costPoints());
+            if (consumed < reward.costPoints()) {
+                // Unreachable: net balance was checked >= cost within this same transaction.
+                throw new IllegalStateException(
+                        "Inconsistent state: consumed " + consumed + " of " + reward.costPoints()
+                                + " for " + customerId);
+            }
             redemptions.insert(customerId, rewardId, reward.costPoints(), when);
-            int remaining = pointLots.balance(customerId, when);
+            int remaining = netBalance(customerId, when);
             log.info("Redeemed '{}' ({} points) for customer '{}'; balance {} -> {} (asOf {})",
                     rewardId, reward.costPoints(), customerId, available, remaining, when);
             return new RedeemResult(customerId, rewardId, reward.costPoints(), when, remaining);
         });
     }
 
-    /** Draw down lots in expiry order until {@code cost} points have been consumed. */
-    private void consumeOldestExpiryFirst(String customerId, LocalDate asOf, int cost) {
-        int toConsume = cost;
+    /**
+     * Refund a purchase: reverse its points and, for any portion already spent that the current
+     * balance can't cover, record debt. Consumes oldest-expiry-first when reclaiming.
+     *
+     * @param asOf date to evaluate against; defaults to today when null
+     * @throws PurchaseNotFoundException if the purchase doesn't exist for this customer
+     * @throws AlreadyRefundedException  if the purchase was already refunded
+     */
+    public RefundResult refund(String customerId, String purchaseId, LocalDate asOf) {
+        requireText(customerId, "customerId");
+        requireText(purchaseId, "purchaseId");
+        LocalDate when = asOf != null ? asOf : LocalDate.now();
+
+        return db.transaction(() -> {
+            PointLot lot = pointLots.findByPurchaseId(purchaseId)
+                    .filter(l -> l.customerId().equals(customerId))
+                    .orElseThrow(() -> {
+                        log.warn("Refund rejected: no purchase '{}' for customer '{}'", purchaseId, customerId);
+                        return new PurchaseNotFoundException(purchaseId);
+                    });
+            if (refunds.exists(purchaseId)) {
+                log.warn("Refund rejected: purchase '{}' already refunded (customer '{}')", purchaseId, customerId);
+                throw new AlreadyRefundedException(purchaseId);
+            }
+
+            int stillAvailable = lot.pointsRemaining();        // unspent points in this purchase's lot
+            int spent = lot.pointsEarned() - stillAvailable;   // portion already redeemed from it
+
+            // 1. Void this purchase's own lot (remove its still-available points).
+            pointLots.updateRemaining(purchaseId, 0);
+            pointLots.markRefunded(purchaseId, when);
+
+            // 2. Reclaim the spent portion from the customer's current balance; shortfall -> debt.
+            int reclaimed = consumeUpTo(customerId, when, spent);
+            int shortfall = spent - reclaimed;
+            if (shortfall > 0) {
+                customers.setDebt(customerId, customers.getDebt(customerId) + shortfall);
+            }
+
+            int pointsReversed = stillAvailable + reclaimed;   // points actually removed from balance
+            refunds.insert(purchaseId, customerId, pointsReversed, shortfall, when);
+            int remaining = netBalance(customerId, when);
+            log.info("Refunded purchase '{}' for customer '{}': reversed {} points, debt +{} (balance now {}, asOf {})",
+                    purchaseId, customerId, pointsReversed, shortfall, remaining, when);
+            return new RefundResult(customerId, purchaseId, pointsReversed, shortfall, remaining, when);
+        });
+    }
+
+    /** Net balance = available (unexpired) points minus outstanding refund debt. */
+    private int netBalance(String customerId, LocalDate asOf) {
+        return pointLots.balance(customerId, asOf) - customers.getDebt(customerId);
+    }
+
+    /**
+     * Draw down lots in expiry order by up to {@code amount} points, returning how many were
+     * actually consumed (which may be less than {@code amount} if the balance is short).
+     */
+    private int consumeUpTo(String customerId, LocalDate asOf, int amount) {
+        int toConsume = amount;
         for (PointLot lot : pointLots.activeLots(customerId, asOf)) {
             if (toConsume <= 0) {
                 break;
@@ -153,11 +229,7 @@ public class LoyaltyService {
                     lot.expiresAt());
             toConsume -= take;
         }
-        if (toConsume > 0) {
-            // Unreachable: balance was checked >= cost within this same transaction.
-            throw new IllegalStateException(
-                    "Inconsistent state: could not consume " + cost + " points for " + customerId);
-        }
+        return amount - toConsume;
     }
 
     private static void requireText(String value, String field) {

@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /** Data access for the {@code point_lots} table. */
 public class PointLotDao {
@@ -83,21 +84,54 @@ public class PointLotDao {
      * not lower a customer's tier; spend reflects purchases, not current balance.
      */
     public int spendSince(String customerId, LocalDate since, LocalDate asOf) {
+        // A purchase refunded on or before asOf no longer counts as spend (so a refund can drop a
+        // tier); one refunded after asOf still counts at that date.
         String sql = """
                 SELECT COALESCE(SUM(points_earned), 0) AS spend
                 FROM point_lots
                 WHERE customer_id = ? AND earned_at > ? AND earned_at <= ?
+                  AND (refunded_at IS NULL OR refunded_at > ?)
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, customerId);
             ps.setString(2, since.toString());
             ps.setString(3, asOf.toString());
+            ps.setString(4, asOf.toString());
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 return rs.getInt("spend");
             }
         } catch (SQLException e) {
             throw new DataAccessException("Failed to compute spend for " + customerId, e);
+        }
+    }
+
+    /** Look up a single lot by its purchase id. */
+    public Optional<PointLot> findByPurchaseId(String purchaseId) {
+        String sql = """
+                SELECT customer_id, purchase_id, points_earned, points_remaining, earned_at, expires_at
+                FROM point_lots
+                WHERE purchase_id = ?
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, purchaseId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(map(rs)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new DataAccessException("Failed to load lot " + purchaseId, e);
+        }
+    }
+
+    /** Mark a lot's purchase as refunded (excludes it from tier spend as of that date). */
+    public void markRefunded(String purchaseId, LocalDate refundedAt) {
+        String sql = "UPDATE point_lots SET refunded_at = ? WHERE purchase_id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, refundedAt.toString());
+            ps.setString(2, purchaseId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new DataAccessException("Failed to mark lot refunded " + purchaseId, e);
         }
     }
 
