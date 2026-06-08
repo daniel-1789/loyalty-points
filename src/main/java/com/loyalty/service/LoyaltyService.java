@@ -5,8 +5,10 @@ import com.loyalty.db.Database;
 import com.loyalty.db.PointLotDao;
 import com.loyalty.db.RedemptionDao;
 import com.loyalty.db.RewardDao;
+import com.loyalty.db.TierDao;
 import com.loyalty.model.PointLot;
 import com.loyalty.model.Reward;
+import com.loyalty.model.Tier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,11 +25,15 @@ public class LoyaltyService {
     /** Points expire this many months after they are earned. */
     private static final int EXPIRY_MONTHS = 12;
 
+    /** Tier is based on spend over this trailing window. */
+    private static final int TIER_WINDOW_MONTHS = 12;
+
     private final Database db;
     private final CustomerDao customers;
     private final PointLotDao pointLots;
     private final RewardDao rewards;
     private final RedemptionDao redemptions;
+    private final TierDao tiers;
 
     public LoyaltyService(Database db) {
         this.db = db;
@@ -35,6 +41,7 @@ public class LoyaltyService {
         this.pointLots = new PointLotDao(db.connection());
         this.rewards = new RewardDao(db.connection());
         this.redemptions = new RedemptionDao(db.connection());
+        this.tiers = new TierDao(db.connection());
     }
 
     /**
@@ -81,13 +88,21 @@ public class LoyaltyService {
         requireText(customerId, "customerId");
         LocalDate when = asOf != null ? asOf : LocalDate.now();
         int balance = pointLots.balance(customerId, when);
-        log.debug("Balance for customer '{}' as of {} = {}", customerId, when, balance);
-        return new BalanceResponse(customerId, balance, when);
+        int spend = pointLots.spendSince(customerId, when.minusMonths(TIER_WINDOW_MONTHS), when);
+        String tier = tiers.tierForSpend(spend);
+        log.debug("Balance for customer '{}' as of {} = {} (tier {}, {}-month spend {})",
+                customerId, when, balance, tier, TIER_WINDOW_MONTHS, spend);
+        return new BalanceResponse(customerId, balance, tier, spend, when);
     }
 
     /** The full reward catalog. */
     public List<Reward> catalog() {
         return rewards.findAll();
+    }
+
+    /** The configured tier thresholds. */
+    public List<Tier> tierThresholds() {
+        return tiers.findAll();
     }
 
     /**

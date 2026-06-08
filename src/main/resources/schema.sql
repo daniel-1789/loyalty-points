@@ -34,6 +34,18 @@ CREATE TABLE IF NOT EXISTS rewards (
     cost_points INTEGER NOT NULL
 );
 
+-- Tier thresholds. A customer's tier is the highest tier whose min_spend their rolling
+-- 12-month spend meets. Stored as data (not code/env) so thresholds can change without a redeploy.
+CREATE TABLE IF NOT EXISTS tiers (
+    name      TEXT    PRIMARY KEY,
+    min_spend INTEGER NOT NULL        -- minimum rolling-12-month spend (in earned points) for this tier
+);
+
+INSERT OR IGNORE INTO tiers(name, min_spend) VALUES
+    ('Silver',   0),
+    ('Gold',     500),
+    ('Platinum', 2500);
+
 -- Redemptions log: records that a redemption happened (for response + audit).
 CREATE TABLE IF NOT EXISTS redemptions (
     id          INTEGER PRIMARY KEY,

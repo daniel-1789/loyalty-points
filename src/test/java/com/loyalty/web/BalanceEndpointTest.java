@@ -35,4 +35,27 @@ class BalanceEndpointTest {
             assertEquals(400, res.code());
         });
     }
+
+    @Test
+    void balanceIncludesTier() {
+        JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
+            client.post("/customers/gina/purchases",
+                    Map.of("purchaseId", "o1", "amount", 500, "date", "2025-01-01"));
+
+            var res = client.get("/customers/gina/balance?asOf=2025-06-01");
+            assertEquals(200, res.code());
+            assertTrue(res.body().string().contains("\"tier\":\"Gold\""));
+        });
+    }
+
+    @Test
+    void listTiersReturnsThresholds() {
+        JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
+            var res = client.get("/tiers");
+            assertEquals(200, res.code());
+            String body = res.body().string();
+            assertTrue(body.contains("Platinum"));
+            assertTrue(body.contains("2500"));
+        });
+    }
 }

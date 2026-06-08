@@ -5,6 +5,7 @@
 # Usage:
 #   scripts/loyalty.sh health
 #   scripts/loyalty.sh rewards
+#   scripts/loyalty.sh tiers
 #   scripts/loyalty.sh earn    <user> <purchase-id> <amount> [date]
 #   scripts/loyalty.sh balance <user> [asOf]
 #   scripts/loyalty.sh redeem  <user> <reward-id> [date]
@@ -35,7 +36,7 @@ pp() {
 }
 
 usage() {
-    sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,21p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
 }
 
@@ -91,6 +92,7 @@ cmd="${1:-}"
 case "$cmd" in
     health)  curl -s "$BASE_URL/health" | pp ;;
     rewards) curl -s "$BASE_URL/rewards" | pp ;;
+    tiers)   curl -s "$BASE_URL/tiers" | pp ;;
     earn)    [[ $# -ge 3 ]] || usage 1; earn "$@" ;;
     balance) [[ $# -ge 1 ]] || usage 1; balance "$@" ;;
     redeem)  [[ $# -ge 2 ]] || usage 1; redeem "$@" ;;

@@ -148,6 +148,45 @@ class LoyaltyServiceTest {
     }
 
     @Test
+    void tierScalesWithSpendAtThresholds() {
+        // No spend -> the entry tier.
+        assertEquals("Silver", tierOf("nobody", LocalDate.of(2025, 6, 1)));
+
+        service.earn("bronze", "br1", new BigDecimal("499"), LocalDate.of(2025, 1, 1));
+        assertEquals("Silver", tierOf("bronze", LocalDate.of(2025, 6, 1))); // just below Gold
+
+        service.earn("gold", "g1", new BigDecimal("500"), LocalDate.of(2025, 1, 1));
+        assertEquals("Gold", tierOf("gold", LocalDate.of(2025, 6, 1)));     // exactly at Gold
+
+        service.earn("plat", "p1", new BigDecimal("2500"), LocalDate.of(2025, 1, 1));
+        assertEquals("Platinum", tierOf("plat", LocalDate.of(2025, 6, 1))); // exactly at Platinum
+    }
+
+    @Test
+    void tierReflectsGrossSpendNotCurrentBalance() {
+        service.earn("dan", "d1", new BigDecimal("600"), LocalDate.of(2025, 1, 1));
+        service.redeem("dan", "free-coffee", LocalDate.of(2025, 6, 1)); // spends 500; balance now 100
+
+        BalanceResponse resp = service.balance("dan", LocalDate.of(2025, 6, 1));
+        assertEquals(100, resp.balance());
+        assertEquals(600, resp.spendLast12Months());
+        assertEquals("Gold", resp.tier()); // tier reflects the 600 spent, not the 100 remaining
+    }
+
+    @Test
+    void tierUsesRolling12MonthWindow() {
+        service.earn("dan", "d1", new BigDecimal("3000"), LocalDate.of(2024, 1, 1));
+        assertEquals("Platinum", tierOf("dan", LocalDate.of(2024, 6, 1))); // within the window
+
+        // By mid-2025 the 2024-01 purchase has rolled out of the trailing 12 months.
+        assertEquals("Silver", tierOf("dan", LocalDate.of(2025, 6, 1)));
+    }
+
+    private String tierOf(String customerId, LocalDate asOf) {
+        return service.balance(customerId, asOf).tier();
+    }
+
+    @Test
     void redeemConsumesOldestExpiryFirst() {
         // Earlier-earned lot expires first and must be drained before the later one.
         service.earn("alice", "order-1", new BigDecimal("300"), LocalDate.of(2025, 1, 1)); // expires 2026-01-01

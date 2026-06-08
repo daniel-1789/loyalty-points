@@ -186,6 +186,20 @@ constraint plus an explicit service check for a clean domain error).
   (well-formed request, unfulfillable given state). Expired points simply aren't counted, so they
   can't be redeemed.
 
+## Tier (extended)
+
+Customers have a tier based on rolling 12-month spend. Thresholds live in a `tiers` table
+(seeded Silver 0 / Gold 500 / Platinum 2500) rather than code or env vars, so they can change
+without a redeploy. Tier = the highest tier whose `min_spend` the spend meets; returned alongside
+the balance, and listed at `GET /tiers`.
+
+- **Spend = gross points earned** in the trailing 12 months (`earned_at` in `(asOf - 12mo, asOf]`),
+  a proxy for dollars spent (1 pt/$1, fractional dollars dropped).
+- **Tier tracks purchases, not balance:** it uses `points_earned`, so redeeming points does not
+  lower a customer's tier.
+- The rolling window happens to equal the expiry window (both 12 months), but they're kept as
+  separate constants since they're conceptually distinct.
+
 ## Other decisions / simplifying assumptions
 
 - **Derived, not stored:** no stored balance, no stored "expired" column. Both are computed

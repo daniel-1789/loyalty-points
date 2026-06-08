@@ -21,6 +21,7 @@ public class LoyaltyController {
 
     public void register(Javalin app) {
         app.get("/rewards", this::listRewards);
+        app.get("/tiers", this::listTiers);
         app.post("/customers/{id}/purchases", this::earn);
         app.get("/customers/{id}/balance", this::balance);
         app.post("/customers/{id}/redemptions", this::redeem);
@@ -29,6 +30,11 @@ public class LoyaltyController {
     /** Reward catalog. */
     private void listRewards(Context ctx) {
         ctx.json(service.catalog());
+    }
+
+    /** Tier thresholds. */
+    private void listTiers(Context ctx) {
+        ctx.json(service.tierThresholds());
     }
 
     /** Redeem: spend points on a reward, consuming oldest-expiry points first. */

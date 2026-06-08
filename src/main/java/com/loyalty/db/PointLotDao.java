@@ -78,6 +78,30 @@ public class PointLotDao {
     }
 
     /**
+     * Total points earned by a customer in the window {@code (since, asOf]} — the rolling-window
+     * "spend" used to determine tier. Based on {@code points_earned} (gross), so redemptions do
+     * not lower a customer's tier; spend reflects purchases, not current balance.
+     */
+    public int spendSince(String customerId, LocalDate since, LocalDate asOf) {
+        String sql = """
+                SELECT COALESCE(SUM(points_earned), 0) AS spend
+                FROM point_lots
+                WHERE customer_id = ? AND earned_at > ? AND earned_at <= ?
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, customerId);
+            ps.setString(2, since.toString());
+            ps.setString(3, asOf.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getInt("spend");
+            }
+        } catch (SQLException e) {
+            throw new DataAccessException("Failed to compute spend for " + customerId, e);
+        }
+    }
+
+    /**
      * Unexpired, non-empty lots for a customer, ordered oldest-expiry-first — the order in which
      * redemptions consume them (so points closest to expiry are spent first).
      */
