@@ -4,12 +4,15 @@
 #
 # Usage:
 #   scripts/loyalty.sh health
+#   scripts/loyalty.sh rewards
 #   scripts/loyalty.sh earn    <user> <purchase-id> <amount> [date]
 #   scripts/loyalty.sh balance <user> [asOf]
+#   scripts/loyalty.sh redeem  <user> <reward-id> [date]
 #   scripts/loyalty.sh demo    <user>
 #
 # Examples:
 #   scripts/loyalty.sh earn alice order-123 100 2025-01-01
+#   scripts/loyalty.sh redeem alice free-coffee 2025-06-01
 #   scripts/loyalty.sh balance alice 2025-06-01
 #
 # The server must be running first (e.g. `java -jar target/loyalty-points.jar`).
@@ -32,7 +35,7 @@ pp() {
 }
 
 usage() {
-    sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
 }
 
@@ -55,6 +58,18 @@ balance() {
     curl -s "$url" | pp
 }
 
+redeem() {
+    local user="$1" reward="$2" date="${3:-}"
+    local body
+    if [[ -n "$date" ]]; then
+        body=$(printf '{"rewardId":"%s","date":"%s"}' "$reward" "$date")
+    else
+        body=$(printf '{"rewardId":"%s"}' "$reward")
+    fi
+    curl -s -X POST "$BASE_URL/customers/$user/redemptions" \
+        -H 'Content-Type: application/json' -d "$body" | pp
+}
+
 # Self-contained walkthrough showing points accruing and then expiring over time.
 demo() {
     local user="${1:-demo-user}"
@@ -75,8 +90,10 @@ cmd="${1:-}"
 
 case "$cmd" in
     health)  curl -s "$BASE_URL/health" | pp ;;
+    rewards) curl -s "$BASE_URL/rewards" | pp ;;
     earn)    [[ $# -ge 3 ]] || usage 1; earn "$@" ;;
     balance) [[ $# -ge 1 ]] || usage 1; balance "$@" ;;
+    redeem)  [[ $# -ge 2 ]] || usage 1; redeem "$@" ;;
     demo)    demo "$@" ;;
     -h|--help|help|"") usage 0 ;;
     *) echo "Unknown command: $cmd" >&2; usage 1 ;;

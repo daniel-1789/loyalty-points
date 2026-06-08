@@ -6,7 +6,9 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.loyalty.db.Database;
 import com.loyalty.service.DuplicatePurchaseException;
+import com.loyalty.service.InsufficientBalanceException;
 import com.loyalty.service.LoyaltyService;
+import com.loyalty.service.RewardNotFoundException;
 import com.loyalty.web.LoyaltyController;
 import io.javalin.Javalin;
 import io.javalin.json.JavalinJackson;
@@ -35,7 +37,12 @@ public class App {
     public static Javalin createApp(Database db) {
         LoyaltyService service = new LoyaltyService(db);
 
-        Javalin app = Javalin.create(config -> config.jsonMapper(jsonMapper()));
+        Javalin app = Javalin.create(config -> {
+            config.jsonMapper(jsonMapper());
+            // One line per request so behaviour is traceable from logs alone.
+            config.requestLogger.http((ctx, ms) ->
+                    log.info("{} {} -> {} ({} ms)", ctx.method(), ctx.path(), ctx.statusCode(), Math.round(ms)));
+        });
 
         app.get("/health", ctx ->
                 ctx.json(new HealthStatus("ok", db.ping() ? "connected" : "unavailable")));
@@ -52,6 +59,14 @@ public class App {
         // Re-submitting an already-recorded purchase is a conflict, not a bad request.
         app.exception(DuplicatePurchaseException.class, (e, ctx) ->
                 ctx.status(409).json(Map.of("error", String.valueOf(e.getMessage()))));
+
+        // Redeeming an unknown reward -> 404.
+        app.exception(RewardNotFoundException.class, (e, ctx) ->
+                ctx.status(404).json(Map.of("error", String.valueOf(e.getMessage()))));
+
+        // Redeeming more than the available balance -> 422 (well-formed but unfulfillable).
+        app.exception(InsufficientBalanceException.class, (e, ctx) ->
+                ctx.status(422).json(Map.of("error", String.valueOf(e.getMessage()))));
 
         // Anything unexpected is logged and still returned as JSON (never plain-text/HTML).
         app.exception(Exception.class, (e, ctx) -> {

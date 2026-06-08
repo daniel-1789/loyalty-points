@@ -40,19 +40,21 @@ public class PointLotDao {
     }
 
     /**
-     * Available balance for a customer as of {@code asOf}: the sum of remaining points across
-     * lots that have not yet expired. A lot is still valid while {@code asOf < expires_at}, so a
-     * lot expires on its expiry date (not the day after). Returns 0 for an unknown customer.
+     * Available balance for a customer as of {@code asOf}: the sum of remaining points across lots
+     * that are active on that date. A lot is active while {@code earned_at <= asOf < expires_at} —
+     * i.e. it has been earned by {@code asOf} and has not yet expired (expiry is exclusive on its
+     * date). Returns 0 for an unknown customer.
      */
     public int balance(String customerId, LocalDate asOf) {
         String sql = """
                 SELECT COALESCE(SUM(points_remaining), 0) AS balance
                 FROM point_lots
-                WHERE customer_id = ? AND expires_at > ?
+                WHERE customer_id = ? AND earned_at <= ? AND expires_at > ?
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, customerId);
             ps.setString(2, asOf.toString());
+            ps.setString(3, asOf.toString());
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 return rs.getInt("balance");
@@ -72,6 +74,45 @@ public class PointLotDao {
             }
         } catch (SQLException e) {
             throw new DataAccessException("Failed to check purchase " + purchaseId, e);
+        }
+    }
+
+    /**
+     * Unexpired, non-empty lots for a customer, ordered oldest-expiry-first — the order in which
+     * redemptions consume them (so points closest to expiry are spent first).
+     */
+    public List<PointLot> activeLots(String customerId, LocalDate asOf) {
+        String sql = """
+                SELECT customer_id, purchase_id, points_earned, points_remaining, earned_at, expires_at
+                FROM point_lots
+                WHERE customer_id = ? AND earned_at <= ? AND expires_at > ? AND points_remaining > 0
+                ORDER BY expires_at ASC, earned_at ASC, purchase_id ASC
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, customerId);
+            ps.setString(2, asOf.toString());
+            ps.setString(3, asOf.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                List<PointLot> lots = new ArrayList<>();
+                while (rs.next()) {
+                    lots.add(map(rs));
+                }
+                return lots;
+            }
+        } catch (SQLException e) {
+            throw new DataAccessException("Failed to load active lots for " + customerId, e);
+        }
+    }
+
+    /** Set a lot's remaining points (used as redemptions draw lots down). */
+    public void updateRemaining(String purchaseId, int pointsRemaining) {
+        String sql = "UPDATE point_lots SET points_remaining = ? WHERE purchase_id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, pointsRemaining);
+            ps.setString(2, purchaseId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new DataAccessException("Failed to update remaining for lot " + purchaseId, e);
         }
     }
 

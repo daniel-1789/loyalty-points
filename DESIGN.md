@@ -175,6 +175,17 @@ constraint plus an explicit service check for a clean domain error).
 - Chose **reject (409)** over **idempotent replay** (returning the existing lot) for explicitness.
   Idempotent replay is a reasonable "with more time" alternative for at-least-once delivery.
 
+## Redeem
+
+- **Oldest-expiry-first consumption.** Redemptions draw down lots ordered by `expires_at` (then
+  `earned_at`), so points closest to expiring are spent first — minimizing waste and satisfying
+  the "redemption order" stretch goal for free.
+- **Transactional.** The balance check, the per-lot draw-downs, and the redemption log insert all
+  run in one transaction, so a redemption is all-or-nothing.
+- **Status codes:** unknown reward -> `404`; insufficient (unexpired) balance -> `422`
+  (well-formed request, unfulfillable given state). Expired points simply aren't counted, so they
+  can't be redeemed.
+
 ## Other decisions / simplifying assumptions
 
 - **Derived, not stored:** no stored balance, no stored "expired" column. Both are computed
@@ -183,8 +194,10 @@ constraint plus an explicit service check for a clean domain error).
   over time without manipulating the system clock — important since we'll test time-based
   behaviour heavily. To be noted as an assumption in the README.
 - **Customer upsert on first earn** — no dedicated customer-creation flow.
-- **Expiry boundary is exclusive:** a lot is valid while `asOf < expires_at`, i.e. points are
-  usable up to but not including the expiry date.
+- **Active window:** a lot counts toward the balance (and is redeemable) only while
+  `earned_at <= asOf < expires_at` — earned by the as-of date, and not yet expired (expiry
+  exclusive on its date). The lower bound matters when querying a balance *back in time* via
+  `asOf`: points from a purchase that hadn't happened yet must not count.
 - **Leap-year expiry** is handled by `java.time` (`LocalDate.plusMonths(12)`): earning on
   2024-02-29 expires 2025-02-28. No hand-rolled date math.
 - **Unknown customer balance is 0** — we don't distinguish "never seen" from "zero points".

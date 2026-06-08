@@ -3,6 +3,7 @@ package com.loyalty.web;
 import com.loyalty.service.BalanceResponse;
 import com.loyalty.service.EarnResult;
 import com.loyalty.service.LoyaltyService;
+import com.loyalty.service.RedeemResult;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 
@@ -19,8 +20,22 @@ public class LoyaltyController {
     }
 
     public void register(Javalin app) {
+        app.get("/rewards", this::listRewards);
         app.post("/customers/{id}/purchases", this::earn);
         app.get("/customers/{id}/balance", this::balance);
+        app.post("/customers/{id}/redemptions", this::redeem);
+    }
+
+    /** Reward catalog. */
+    private void listRewards(Context ctx) {
+        ctx.json(service.catalog());
+    }
+
+    /** Redeem: spend points on a reward, consuming oldest-expiry points first. */
+    private void redeem(Context ctx) {
+        RedeemRequest req = ctx.bodyAsClass(RedeemRequest.class);
+        RedeemResult result = service.redeem(ctx.pathParam("id"), req.rewardId(), req.date());
+        ctx.status(201).json(result);
     }
 
     /** Earn: record a purchase and award points. */
