@@ -152,8 +152,9 @@ deterministically — without touching the system clock.
 
 Points are modeled as a **ledger of lots**. Every earn creates one row capturing that event; its
 earning facts (`points_earned`, `earned_at`, `expires_at`) never change, while `points_remaining`
-is drawn down as points are spent. Redemption and expiry are attributed to specific lots, which is
-what makes both correct.
+is drawn down as points are spent. Because each redemption draws from specific lots and every lot
+carries its own expiry date, the model tracks exactly which points were spent and which have
+expired — the basis for a correct balance and oldest-first redemption.
 
 | Table | Purpose |
 |---|---|
