@@ -8,6 +8,8 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -133,17 +135,59 @@ public class Database implements AutoCloseable {
     }
 
     private void applySchema() throws SQLException {
-        // Strip `--` line comments first, then split on ';'. JDBC executes one statement per call,
-        // and stripping comments keeps a semicolon inside a comment from breaking the split. (Our
-        // schema has no `--` or ';' inside string literals, so this stays correct.)
-        String ddl = readResource(SCHEMA_RESOURCE).replaceAll("(?m)--.*$", "");
+        // JDBC executes one statement per call, so split the script into statements first.
         try (Statement s = connection.createStatement()) {
-            for (String statement : ddl.split(";")) {
-                String trimmed = statement.strip();
-                if (!trimmed.isEmpty()) {
-                    s.execute(trimmed);
-                }
+            for (String statement : splitStatements(readResource(SCHEMA_RESOURCE))) {
+                s.execute(statement);
             }
+        }
+    }
+
+    /**
+     * Split a SQL script into individual statements on `;`, ignoring `;` and `--` that appear inside
+     * single-quoted string literals (with SQLite's doubled-quote `''` escape) and stripping `--`
+     * line comments. Avoids the classic bug where a semicolon in a comment or a seeded value
+     * shatters a naive {@code split(";")}.
+     */
+    static List<String> splitStatements(String sql) {
+        List<String> statements = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inString = false;
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (inString) {
+                current.append(c);
+                if (c == '\'') {
+                    if (i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+                        current.append('\'');   // doubled '' is an escaped quote, not the end
+                        i++;
+                    } else {
+                        inString = false;
+                    }
+                }
+            } else if (c == '-' && i + 1 < sql.length() && sql.charAt(i + 1) == '-') {
+                while (i < sql.length() && sql.charAt(i) != '\n') {  // skip to end of line comment
+                    i++;
+                }
+                current.append(' ');
+            } else if (c == '\'') {
+                inString = true;
+                current.append(c);
+            } else if (c == ';') {
+                addIfNotBlank(statements, current);
+                current.setLength(0);
+            } else {
+                current.append(c);
+            }
+        }
+        addIfNotBlank(statements, current);
+        return statements;
+    }
+
+    private static void addIfNotBlank(List<String> statements, StringBuilder statement) {
+        String trimmed = statement.toString().strip();
+        if (!trimmed.isEmpty()) {
+            statements.add(trimmed);
         }
     }
 

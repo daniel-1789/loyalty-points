@@ -49,32 +49,19 @@ public class App {
         app.get("/health", ctx ->
                 ctx.json(new HealthStatus("ok", db.ping() ? "connected" : "unavailable")));
 
-        // Malformed JSON, wrong field types, or an invalid date fail during body deserialization.
+        // Domain/validation exceptions: each maps to a status and echoes its message as JSON.
+        mapError(app, IllegalArgumentException.class, 400);       // invalid input
+        mapError(app, DuplicatePurchaseException.class, 409);     // purchase already recorded
+        mapError(app, RewardNotFoundException.class, 404);        // unknown reward
+        mapError(app, PurchaseNotFoundException.class, 404);      // no such purchase for customer
+        mapError(app, AlreadyRefundedException.class, 409);       // purchase already refunded
+        mapError(app, InsufficientBalanceException.class, 422);   // can't afford the reward
+
+        // Malformed JSON / wrong field types / invalid date fail in body deserialization; give a
+        // fixed message rather than leaking Jackson's verbose internals.
         app.exception(JacksonException.class, (e, ctx) ->
                 ctx.status(400).json(Map.of("error",
                         "Invalid request body: check field types and that any date is a real YYYY-MM-DD")));
-
-        // Invalid input from the service surfaces as a 400 with a clear message.
-        app.exception(IllegalArgumentException.class, (e, ctx) ->
-                ctx.status(400).json(Map.of("error", String.valueOf(e.getMessage()))));
-
-        // Re-submitting an already-recorded purchase is a conflict, not a bad request.
-        app.exception(DuplicatePurchaseException.class, (e, ctx) ->
-                ctx.status(409).json(Map.of("error", String.valueOf(e.getMessage()))));
-
-        // Unknown reward, or refunding a purchase that doesn't exist for the customer -> 404.
-        app.exception(RewardNotFoundException.class, (e, ctx) ->
-                ctx.status(404).json(Map.of("error", String.valueOf(e.getMessage()))));
-        app.exception(PurchaseNotFoundException.class, (e, ctx) ->
-                ctx.status(404).json(Map.of("error", String.valueOf(e.getMessage()))));
-
-        // Refunding an already-refunded purchase -> 409.
-        app.exception(AlreadyRefundedException.class, (e, ctx) ->
-                ctx.status(409).json(Map.of("error", String.valueOf(e.getMessage()))));
-
-        // Redeeming more than the available balance -> 422 (well-formed but unfulfillable).
-        app.exception(InsufficientBalanceException.class, (e, ctx) ->
-                ctx.status(422).json(Map.of("error", String.valueOf(e.getMessage()))));
 
         // Anything unexpected is logged and still returned as JSON (never plain-text/HTML).
         app.exception(Exception.class, (e, ctx) -> {
@@ -84,6 +71,12 @@ public class App {
 
         new LoyaltyController(service).register(app);
         return app;
+    }
+
+    /** Register a handler that maps an exception type to a status code, echoing its message as JSON. */
+    private static <E extends Exception> void mapError(Javalin app, Class<E> type, int status) {
+        app.exception(type, (e, ctx) ->
+                ctx.status(status).json(Map.of("error", String.valueOf(e.getMessage()))));
     }
 
     /** Jackson configured to read/write java.time types as ISO-8601 strings (not numeric arrays). */
