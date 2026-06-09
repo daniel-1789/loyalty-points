@@ -1,7 +1,7 @@
 -- Loyalty points schema (SQLite).
 --
 -- Applied idempotently on startup (CREATE TABLE IF NOT EXISTS), so the database file is
--- created and seeded automatically on first run. See DESIGN.md for the data model rationale.
+-- created and seeded automatically on first run. See the README for the data model rationale.
 --
 -- Dates are stored as ISO-8601 strings (TEXT). SQLite has no native date type, and ISO-8601
 -- sorts/compares correctly as text, so "expires_at > :asOf" works with plain string comparison.

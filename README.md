@@ -146,9 +146,6 @@ deterministically — without touching the system clock.
 
 ## Design
 
-The full design log — including alternatives considered and rejected — is in
-[`DESIGN.md`](DESIGN.md). The essentials:
-
 ### Data model
 
 Points are modeled as a **ledger of lots**. Every earn creates one immutable row capturing that
@@ -172,29 +169,63 @@ event; redemption and expiry are attributed to specific lots, which is what make
   balance, and record any shortfall as debt. The balance can go negative; the next earn pays the
   debt down first (and a refund removes that purchase from tier spend, so it can lower a tier).
 
+### Key decisions & assumptions
+
+- **`purchase_id` is the primary key of a points lot.** We assume it's a stable, globally-unique
+  identifier supplied by the upstream commerce platform — one purchase, one earning event. That
+  gives idempotency (a duplicate earn is a `409`) and a clean handle for refunds, for free.
+- **Refunds allow a negative balance that's self-healing.** A refund reverses a purchase's points
+  and, for any portion already spent, records debt — so the balance can go negative. Rather than
+  letting that debt linger or expire, the *next* points earned pay it down first. This is also the
+  anti-abuse property: you can't buy → redeem → return → wait it out.
+- **Refunds keep the customer id in the path as a sanity/ownership check.** Since `purchase_id` is
+  globally unique, the customer isn't strictly needed to find the purchase — but we verify the
+  purchase belongs to that customer (mismatch → `404`). There's no requirement for it; we kept it
+  instinctively as a guard, with the understanding that a real auth token would carry that identity
+  in production.
+- **Tier thresholds are arbitrary and data-driven.** Seeded Silver 0 / Gold 500 / Platinum 2500 in
+  a table (not code/env), so they're changeable. Setting Silver at 0 means everyone has a tier; a
+  non-zero Silver floor would be equally valid and would simply mean low spenders have *no* tier.
+- **Time is an explicit input (`asOf` / `date`), not a hidden `now()`.** Every operation takes an
+  optional date, so history can be simulated and time-based behavior (expiry, rolling-window tiers)
+  tested deterministically — no clock manipulation.
+- **Tier reflects gross spend, not current balance.** It's based on `points_earned` over the
+  trailing 12 months, so redeeming points never demotes a customer; only a refund (which un-does a
+  purchase) reduces spend and can drop a tier.
+- **Deliberately lightweight stack — Javalin + hand-written SQL + SQLite — chosen for turnaround.**
+  As someone whose day-to-day backend work is in Python, I favored a minimal, fully-explainable
+  stack over a heavier one (Spring Boot / an ORM) so I could move quickly and understand every line
+  rather than fight framework magic within a ~3-hour box.
+- **No Docker — a simple local run.** `mvn package` then `java -jar` (or the CLI) keeps the barrier
+  to running it low. Containerization would be the next step toward deployment but adds nothing for
+  reviewing the code.
+- **1 point per whole dollar**, fractional dollars dropped (`$10.99` → 10).
+- **Expiry boundary is exclusive** — a lot is active while `earned_at <= asOf < expires_at`.
+- **Tier "spend" is counted in earned points** (≈ whole dollars), over the rolling 12 months.
+- **Unknown customer → balance `0`** — not distinguished from a genuine zero balance.
+- **Mutable lots over an append-only ledger** — the most significant trade-off, detailed next.
+
 ### A decision with a real trade-off: mutable lots vs. an append-only ledger
 
-We decrement `points_remaining` on each lot rather than keeping an immutable, signed event ledger.
-The ledger's headline appeal is "a refund is just one negative entry" — but we walked the
-buy → redeem → return case and found that **once a clawback exceeds what's left, the ledger also
-needs a special non-expiring negative entry**, so refunds are a wash between the two designs. With
-that neutralized, the ledger's only remaining edge is a richer audit trail (which the brief doesn't
-require), at the cost of a more complex balance query on every read. Mutable lots is the simpler
-design that fully satisfies the requirements; the ledger is the natural "with more time" evolution.
+I decrement `points_remaining` on each lot rather than keeping an immutable, signed event ledger.
 
-### Key assumptions
-
-- 1 point per whole dollar; fractional dollars dropped (`$10.99` → 10).
-- A lot is active while `earned_at <= asOf < expires_at` (expiry exclusive on its date).
-- `purchase_id` is globally unique — one earn per purchase (duplicate → `409`).
-- Tier "spend" is measured in earned points (≈ whole dollars), over a rolling 12 months.
-- Unknown customer → balance `0` (not distinguished from a zero balance).
+I explored the idea of using an append-only ledger - it intuitively seemed to offer
+a refund as "just a negative entry." However, experimentation with Claude
+showed that in a buy -> redeem -> return case, 
+ **once a clawback exceeds what's left, the ledger also
+needs a special non-expiring negative entry**, making refunds a wash between the 
+two designs. With
+that neutralized, the ledger's only remaining edge is a richer audit trail 
+(which while attractive is out of scope), at the cost of a more complex 
+balance query on every read. Mutable lots is the simpler
+design that fully satisfies the requirements; in a scenario which didn't suggest
+a three-hour or so time box I'd likely lean more towards the ledger implementation.
 
 ### What I'd add with more time
 
 - **Append-only event ledger** for full auditability (the trade-off above) — would also let
   balance queries time-travel across redemptions/refunds, which mutable lots can't.
-- **Flyway/Liquibase** migrations instead of hand-applied `schema.sql`.
+- **Flyway/Liquibase** migrations instead of hand-applied `schema.sql`. As someone used to working in Django and SQLAlchemy in Python, this seems like it would be handy.
 - **Idempotent earn replay** (return the existing lot) instead of `409`, for at-least-once delivery.
 - A connection pool (instead of a single shared connection) for real concurrency.
 
@@ -203,8 +234,8 @@ design that fully satisfies the requirements; the ledger is the natural "with mo
 Built with **Claude Code** (Anthropic's agentic CLI) used as a pair programmer: talking through the
 data-model trade-offs, scaffolding the project, writing implementation and tests, and catching bugs
 (e.g. the missing lower bound on the balance window surfaced while experimenting). Design decisions
-— framework choice, the lot model, mutable-lots-vs-ledger, tier semantics — were made by me, with
-the AI used to pressure-test reasoning and accelerate the typing.
+— framework choice, the lot model, mutable-lots-vs-ledger, tier semantics — were made by me. I used
+the AI to test various assumptions and possibilities.
 
 ## Django Translation
 
