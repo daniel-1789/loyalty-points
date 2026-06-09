@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** HTTP tests for the balance endpoint, including the optional asOf date and expiry. */
 class BalanceEndpointTest {
 
+    // GET balance shows 100 points in-window then 0 after expiry via ?asOf= — happy path + expiry over real HTTP.
     @Test
     void balanceReflectsEarnedPointsAndExpiry() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
@@ -28,6 +29,7 @@ class BalanceEndpointTest {
         });
     }
 
+    // A malformed asOf query param returns HTTP 400, so the endpoint rejects bad date input cleanly.
     @Test
     void balanceRejectsMalformedAsOfWith400() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
@@ -36,6 +38,7 @@ class BalanceEndpointTest {
         });
     }
 
+    // The balance response includes the computed tier (Gold for 500 points), exposing tier data over HTTP.
     @Test
     void balanceIncludesTier() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
@@ -48,6 +51,7 @@ class BalanceEndpointTest {
         });
     }
 
+    // GET /tiers returns the seeded tier names and thresholds (Platinum, 2500), verifying tier config is served.
     @Test
     void listTiersReturnsThresholds() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {

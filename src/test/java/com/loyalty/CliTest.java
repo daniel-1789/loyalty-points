@@ -44,6 +44,7 @@ class CliTest {
         return err.toString(StandardCharsets.UTF_8);
     }
 
+    // CLI earn then balance prints points + tier — proves the CLI drives the same service/tier logic as the API.
     @Test
     void earnThenBalanceReportsPointsAndTier() {
         assertEquals(0, cli.run(new String[]{
@@ -54,6 +55,7 @@ class CliTest {
         assertTrue(stdout().contains("600 points, tier Gold"), stdout());
     }
 
+    // Redeem deducts the reward cost and reports remaining points — confirms redemption actually consumes the balance.
     @Test
     void redeemConsumesPoints() {
         cli.run(new String[]{
@@ -63,6 +65,7 @@ class CliTest {
         assertTrue(stdout().contains("redeemed free-coffee for 500 points; 100 remaining"), stdout());
     }
 
+    // Redeeming beyond the balance exits non-zero with an error — ensures the CLI signals failed redemptions to scripts.
     @Test
     void insufficientBalanceExitsNonZeroWithMessage() {
         cli.run(new String[]{
@@ -74,6 +77,7 @@ class CliTest {
         assertTrue(stderr().contains("Insufficient balance"), stderr());
     }
 
+    // Omitting a required flag yields exit 2 and a clear message — protects users from silent misuse of commands.
     @Test
     void missingRequiredFlagIsUsageError() {
         int code = cli.run(new String[]{"balance"}); // no --user
@@ -81,12 +85,14 @@ class CliTest {
         assertTrue(stderr().contains("--user is required"), stderr());
     }
 
+    // An unrecognized command exits 2 with "Unknown command" — guards against typos being treated as valid actions.
     @Test
     void unknownCommandIsUsageError() {
         assertEquals(2, cli.run(new String[]{"frobnicate"}));
         assertTrue(stderr().contains("Unknown command"), stderr());
     }
 
+    // A malformed date maps to a clean exit-2 usage error — gives parity with the web layer's 400 for bad input.
     @Test
     void malformedDateIsUsageErrorWithCleanMessage() {
         int code = cli.run(new String[]{"balance", "--user=alice", "--as-of=not-a-date"});
@@ -94,6 +100,7 @@ class CliTest {
         assertTrue(stderr().contains("must be an ISO date"), stderr());
     }
 
+    // A non-numeric amount becomes a clean exit-2 usage error — mirrors the API's 400 for unparseable input.
     @Test
     void nonNumericAmountIsUsageErrorWithCleanMessage() {
         int code = cli.run(new String[]{
@@ -102,6 +109,7 @@ class CliTest {
         assertTrue(stderr().contains("must be a number"), stderr());
     }
 
+    // A negative amount rejected by the service surfaces as exit 2 — service-level validation maps to a usage error.
     @Test
     void invalidAmountFromServiceIsUsageError() {
         int code = cli.run(new String[]{
@@ -110,6 +118,7 @@ class CliTest {
         assertTrue(stderr().contains("greater than zero"), stderr());
     }
 
+    // The rewards command lists the catalog including free-coffee — lets users discover redeemable rewards from the CLI.
     @Test
     void rewardsListsCatalog() {
         assertEquals(0, cli.run(new String[]{"rewards"}));

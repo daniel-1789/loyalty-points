@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** HTTP tests for the refund endpoint. */
 class RefundEndpointTest {
 
+    // Refunding a purchase whose points were already spent drives the balance negative and records debt over HTTP.
     @Test
     void refundAfterSpendingReturnsNegativeBalance() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
@@ -30,6 +31,7 @@ class RefundEndpointTest {
         });
     }
 
+    // Refunding a purchase that never existed returns 404, verifying the endpoint rejects unknown purchase IDs.
     @Test
     void refundUnknownPurchaseReturns404() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
@@ -38,6 +40,7 @@ class RefundEndpointTest {
         });
     }
 
+    // Refunding the same purchase twice returns 409, verifying the endpoint blocks duplicate refunds over HTTP.
     @Test
     void refundTwiceReturns409() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {

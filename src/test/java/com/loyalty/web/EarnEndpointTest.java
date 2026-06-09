@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** HTTP smoke tests for the earn endpoint, booting the real app against an in-memory database. */
 class EarnEndpointTest {
 
+    // POST purchase returns 201 with points earned and expiry date — the earn happy path over HTTP.
     @Test
     void postPurchaseReturns201WithPointsEarned() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
@@ -26,6 +27,7 @@ class EarnEndpointTest {
         });
     }
 
+    // Replaying the same purchaseId returns 409 — confirms idempotency guards against double-crediting points.
     @Test
     void postDuplicatePurchaseReturns409() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
@@ -35,6 +37,7 @@ class EarnEndpointTest {
         });
     }
 
+    // An impossible calendar date returns 400 with a JSON error body — validates clean error handling over HTTP.
     @Test
     void postPurchaseWithInvalidDateReturns400Json() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
@@ -48,6 +51,7 @@ class EarnEndpointTest {
         });
     }
 
+    // A non-numeric amount returns 400 — ensures malformed input is rejected before any points are credited.
     @Test
     void postPurchaseWithNonNumericAmountReturns400() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
@@ -58,6 +62,7 @@ class EarnEndpointTest {
         });
     }
 
+    // A non-positive amount returns 400 — prevents zero or negative purchases from minting bogus points.
     @Test
     void postPurchaseRejectsNonPositiveAmountWith400() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {

@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** HTTP tests for the redeem and rewards endpoints. */
 class RedeemEndpointTest {
 
+    // GET /rewards returns 200 with the seeded catalog (free-coffee) — confirms the endpoint and DB seeding over the real app.
     @Test
     void listRewardsReturnsCatalog() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
@@ -22,6 +23,7 @@ class RedeemEndpointTest {
         });
     }
 
+    // A valid redemption returns 201 with points spent and remaining balance — verifies the full earn-then-redeem flow end to end.
     @Test
     void redeemReturns201AndRemainingBalance() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
@@ -38,6 +40,7 @@ class RedeemEndpointTest {
         });
     }
 
+    // Redeeming an unknown reward id returns 404 — confirms the endpoint rejects missing catalog entries rather than failing silently.
     @Test
     void redeemUnknownRewardReturns404() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {
@@ -51,6 +54,7 @@ class RedeemEndpointTest {
         });
     }
 
+    // Redeeming with too few points returns 422 — confirms the endpoint blocks overspending against the customer's real balance.
     @Test
     void redeemInsufficientBalanceReturns422() {
         JavalinTest.test(App.createApp(new Database("jdbc:sqlite::memory:")), (server, client) -> {

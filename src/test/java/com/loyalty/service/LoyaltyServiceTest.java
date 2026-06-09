@@ -38,6 +38,7 @@ class LoyaltyServiceTest {
         db.close();
     }
 
+    // Earn awards 1 point per dollar and stores a lot expiring 12 months later — the core earn rule.
     @Test
     void earnCreatesLotWithTwelveMonthExpiry() {
         EarnResult result = service.earn("alice", "order-1", new BigDecimal("100.00"), LocalDate.of(2025, 1, 1));
@@ -55,12 +56,14 @@ class LoyaltyServiceTest {
         assertEquals("order-1", lot.purchaseId());
     }
 
+    // Fractional dollars floor to whole points (10.99 -> 10), so customers never get rounded-up credit.
     @Test
     void earnFloorsFractionalDollars() {
         EarnResult result = service.earn("bob", "order-2", new BigDecimal("10.99"), LocalDate.of(2025, 1, 1));
         assertEquals(10, result.pointsEarned());
     }
 
+    // Earning for a brand-new customer auto-creates them, so the lot's foreign key holds without prior signup.
     @Test
     void earnLazilyCreatesCustomer() {
         // No explicit customer creation; the earn must succeed and satisfy the FK on point_lots.
@@ -68,6 +71,7 @@ class LoyaltyServiceTest {
         assertEquals(5, result.pointsEarned());
     }
 
+    // Zero or negative purchase amounts are rejected, preventing meaningless or balance-draining earns.
     @Test
     void earnRejectsNonPositiveAmount() {
         assertThrows(IllegalArgumentException.class,
@@ -76,6 +80,7 @@ class LoyaltyServiceTest {
                 () -> service.earn("alice", "order-5", new BigDecimal("-5"), LocalDate.of(2025, 1, 1)));
     }
 
+    // Amounts exceeding Integer.MAX_VALUE raise a clean validation error rather than an overflow/500.
     @Test
     void earnRejectsAmountTooLargeForInt() {
         // Above Integer.MAX_VALUE: must be a clean validation error, not an ArithmeticException/500.
@@ -83,6 +88,7 @@ class LoyaltyServiceTest {
                 () -> service.earn("alice", "order-big", new BigDecimal("9999999999"), LocalDate.of(2025, 1, 1)));
     }
 
+    // Blank customer or purchase identifiers are rejected, guarding against orphaned or unattributable lots.
     @Test
     void earnRejectsBlankIdentifiers() {
         assertThrows(IllegalArgumentException.class,
@@ -91,6 +97,7 @@ class LoyaltyServiceTest {
                 () -> service.earn("alice", "", new BigDecimal("5"), LocalDate.of(2025, 1, 1)));
     }
 
+    // Re-earning the same purchase id is rejected and creates no second lot, preventing double-crediting.
     @Test
     void earnRejectsDuplicatePurchaseId() {
         service.earn("dan", "order-1", new BigDecimal("100"), LocalDate.of(2025, 1, 1));
@@ -102,6 +109,7 @@ class LoyaltyServiceTest {
         assertEquals(1, new PointLotDao(db.connection()).findByCustomer("dan").size());
     }
 
+    // Purchase ids are globally unique, so even a different customer cannot reuse an existing order id.
     @Test
     void earnRejectsDuplicatePurchaseIdAcrossCustomers() {
         // purchase_id is globally unique: an order belongs to a single purchase, not a customer.
@@ -111,6 +119,7 @@ class LoyaltyServiceTest {
                 () -> service.earn("alice", "order-1", new BigDecimal("100"), LocalDate.of(2025, 1, 1)));
     }
 
+    // Balance counts points through the day before expiry but drops them on the expiry date — exclusive window.
     @Test
     void balanceExcludesExpiredLots() {
         service.earn("alice", "order-1", new BigDecimal("100"), LocalDate.of(2025, 1, 1)); // expires 2026-01-01
@@ -121,6 +130,7 @@ class LoyaltyServiceTest {
         assertEquals(0, balanceOf("alice", LocalDate.of(2026, 6, 1)));    // long after
     }
 
+    // Balance sums multiple active lots and drops each individually as its own expiry date passes.
     @Test
     void balanceSumsMultipleLotsAndDropsThemAsTheyExpire() {
         service.earn("alice", "order-1", new BigDecimal("100"), LocalDate.of(2025, 1, 1)); // expires 2026-01-01
@@ -131,11 +141,13 @@ class LoyaltyServiceTest {
         assertEquals(0, balanceOf("alice", LocalDate.of(2026, 3, 1)));    // both expired
     }
 
+    // An unknown customer returns balance 0 rather than erroring, so queries are safe for non-existent ids.
     @Test
     void balanceForUnknownCustomerIsZero() {
         assertEquals(0, balanceOf("ghost", LocalDate.of(2025, 6, 1)));
     }
 
+    // Points don't count before their earn date but do on it — the as-of lower bound is inclusive.
     @Test
     void balanceExcludesLotsNotYetEarnedAsOfDate() {
         service.earn("dan", "order-1", new BigDecimal("100"), LocalDate.of(2025, 12, 20)); // expires 2026-12-20
@@ -147,6 +159,7 @@ class LoyaltyServiceTest {
         assertEquals(100, balanceOf("dan", LocalDate.of(2026, 6, 1)));
     }
 
+    // Redeeming as of a date before the earn fails, since not-yet-earned points can't fund a reward.
     @Test
     void redeemCannotUsePointsNotYetEarnedAsOfDate() {
         service.earn("dan", "order-1", new BigDecimal("600"), LocalDate.of(2025, 12, 20));
@@ -159,6 +172,7 @@ class LoyaltyServiceTest {
         return service.balance(customerId, asOf).balance();
     }
 
+    // Tier matches spend thresholds inclusively (Silver default, 500 Gold, 2500 Platinum) — exact boundaries.
     @Test
     void tierScalesWithSpendAtThresholds() {
         // No spend -> the entry tier.
@@ -174,6 +188,7 @@ class LoyaltyServiceTest {
         assertEquals("Platinum", tierOf("plat", LocalDate.of(2025, 6, 1))); // exactly at Platinum
     }
 
+    // Tier is driven by gross spend, not remaining balance, so redeeming points never downgrades a customer.
     @Test
     void tierReflectsGrossSpendNotCurrentBalance() {
         service.earn("dan", "d1", new BigDecimal("600"), LocalDate.of(2025, 1, 1));
@@ -185,6 +200,7 @@ class LoyaltyServiceTest {
         assertEquals("Gold", resp.tier()); // tier reflects the 600 spent, not the 100 remaining
     }
 
+    // Tier uses a rolling trailing-12-month spend window, so old purchases age out and downgrade the tier.
     @Test
     void tierUsesRolling12MonthWindow() {
         service.earn("dan", "d1", new BigDecimal("3000"), LocalDate.of(2024, 1, 1));
@@ -198,6 +214,7 @@ class LoyaltyServiceTest {
         return service.balance(customerId, asOf).tier();
     }
 
+    // Concurrent earns on one connection all succeed with no lost updates, proving access is serialized safely.
     @Test
     void concurrentEarnsStayConsistent() throws InterruptedException {
         // All operations share one DB connection; this exercises the serialization that keeps
@@ -231,6 +248,7 @@ class LoyaltyServiceTest {
         assertEquals(threads, new PointLotDao(db.connection()).findByCustomer("alice").size());
     }
 
+    // Redemption drains the soonest-to-expire lot first, minimizing points lost to expiry (FIFO-by-expiry).
     @Test
     void redeemConsumesOldestExpiryFirst() {
         // Earlier-earned lot expires first and must be drained before the later one.
@@ -248,6 +266,7 @@ class LoyaltyServiceTest {
         assertEquals(100, byPurchase.get("order-2").pointsRemaining()); // remainder taken from the next
     }
 
+    // Redeeming a reward costing more than the balance is rejected, preventing accidental negative balances.
     @Test
     void redeemRejectsInsufficientBalance() {
         service.earn("alice", "order-1", new BigDecimal("100"), LocalDate.of(2025, 1, 1));
@@ -255,6 +274,7 @@ class LoyaltyServiceTest {
                 () -> service.redeem("alice", "free-coffee", LocalDate.of(2025, 6, 1))); // needs 500
     }
 
+    // Redeeming an unknown reward throws rather than silently spending points on a non-existent catalog item.
     @Test
     void redeemRejectsUnknownReward() {
         service.earn("alice", "order-1", new BigDecimal("1000"), LocalDate.of(2025, 1, 1));
@@ -262,6 +282,7 @@ class LoyaltyServiceTest {
                 () -> service.redeem("alice", "no-such-reward", LocalDate.of(2025, 6, 1)));
     }
 
+    // Expired points can't fund a redemption, so the as-of expiry filter applies to spending as well as balance.
     @Test
     void redeemCannotUseExpiredPoints() {
         service.earn("alice", "order-1", new BigDecimal("600"), LocalDate.of(2025, 1, 1)); // expires 2026-01-01
@@ -270,6 +291,7 @@ class LoyaltyServiceTest {
                 () -> service.redeem("alice", "free-coffee", LocalDate.of(2026, 2, 1)));
     }
 
+    // Redeeming exactly the full balance is allowed and leaves zero — the off-by-one boundary on affordability.
     @Test
     void redeemExactBalanceLeavesZero() {
         service.earn("alice", "order-1", new BigDecimal("500"), LocalDate.of(2025, 1, 1));
@@ -277,6 +299,7 @@ class LoyaltyServiceTest {
         assertEquals(0, result.balanceRemaining());
     }
 
+    // Refunding an unspent purchase reverses its points with no debt and removes it from tier spend.
     @Test
     void refundOfUnredeemedPurchaseRemovesPointsWithoutDebt() {
         service.earn("dan", "order-1", new BigDecimal("600"), LocalDate.of(2025, 1, 1));
@@ -290,6 +313,7 @@ class LoyaltyServiceTest {
         assertEquals("Silver", tierOf("dan", LocalDate.of(2025, 6, 1)));
     }
 
+    // Refunding a partly-spent purchase reverses what remains and books the spent portion as negative debt.
     @Test
     void refundAfterSpendingDrivesBalanceNegative() {
         service.earn("dan", "order-1", new BigDecimal("600"), LocalDate.of(2025, 1, 1));
@@ -302,6 +326,7 @@ class LoyaltyServiceTest {
         assertEquals(-500, result.balanceRemaining());
     }
 
+    // New earns first pay off outstanding refund debt, and once settled it never resurrects when points expire.
     @Test
     void earningPaysDownDebtAndItStaysSettled() {
         service.earn("dan", "order-1", new BigDecimal("600"), LocalDate.of(2025, 1, 1));
@@ -316,6 +341,7 @@ class LoyaltyServiceTest {
         assertEquals(0, service.balance("dan", LocalDate.of(2026, 9, 1)).balance());
     }
 
+    // A refund reclaims points from the customer's other lots before resorting to debt, minimizing negative balances.
     @Test
     void refundReclaimsFromOtherLotsBeforeCreatingDebt() {
         service.earn("dan", "order-1", new BigDecimal("500"), LocalDate.of(2025, 1, 1)); // expires first
@@ -329,12 +355,14 @@ class LoyaltyServiceTest {
         assertEquals(0, result.balanceRemaining());
     }
 
+    // Refunding a non-existent purchase throws, so bogus refund requests can't silently create debt.
     @Test
     void refundUnknownPurchaseThrows() {
         assertThrows(PurchaseNotFoundException.class,
                 () -> service.refund("dan", "nope", LocalDate.of(2025, 6, 1)));
     }
 
+    // Refunding the same purchase twice throws, preventing double-reversal that would over-deduct points.
     @Test
     void refundTwiceThrows() {
         service.earn("dan", "order-1", new BigDecimal("100"), LocalDate.of(2025, 1, 1));
