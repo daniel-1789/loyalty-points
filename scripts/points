@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#
+# Loyalty CLI — drives LoyaltyService directly against the database (no server needed).
+# Build first with `mvn package`, then:
+#
+#   scripts/points earn    --user=alice --purchase-id=order-123 --amount=100 [--date=2025-01-01]
+#   scripts/points balance --user=alice [--as-of=2025-06-01]
+#   scripts/points redeem  --user=alice --reward=free-coffee [--date=2025-06-01]
+#   scripts/points refund  --user=alice --purchase-id=order-123 [--date=2025-07-01]
+#   scripts/points rewards
+#   scripts/points tiers
+#
+# Finds a JDK automatically (JAVA_HOME, then Homebrew openjdk@21, then a working `java` on PATH).
+# Override the database with LOYALTY_DB_URL.
+
+set -euo pipefail
+
+JAR="$(cd "$(dirname "$0")/.." && pwd)/target/loyalty-points.jar"
+if [[ ! -f "$JAR" ]]; then
+    echo "Build first: mvn package (missing $JAR)" >&2
+    exit 1
+fi
+
+# Resolve a Java binary. macOS installs a stub `/usr/bin/java` even with no JDK, so a bare `java`
+# isn't reliable -- we verify it actually runs before using it.
+find_java() {
+    if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]]; then
+        echo "$JAVA_HOME/bin/java"; return 0
+    fi
+    local brew_java=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home/bin/java
+    if [[ -x "$brew_java" ]]; then
+        echo "$brew_java"; return 0
+    fi
+    if command -v java >/dev/null 2>&1 && java -version >/dev/null 2>&1; then
+        echo java; return 0
+    fi
+    return 1
+}
+
+JAVA_BIN="$(find_java)" || {
+    echo "No Java runtime found. Set JAVA_HOME, or install JDK 21: brew install openjdk@21" >&2
+    exit 1
+}
+
+# Quiet the service's INFO logs for clean interactive output (warnings/errors still show on stderr).
+exec "$JAVA_BIN" -Dorg.slf4j.simpleLogger.defaultLogLevel=warn -cp "$JAR" com.loyalty.Cli "$@"
