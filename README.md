@@ -178,6 +178,13 @@ event; redemption and expiry are attributed to specific lots, which is what make
   and, for any portion already spent, records debt — so the balance can go negative. Rather than
   letting that debt linger or expire, the *next* points earned pay it down first. This is also the
   anti-abuse property: you can't buy → redeem → return → wait it out.
+- **Consequence of self-healing debt: no real-money recovery.** Keeping the clawback inside the
+  points system (rather than touching money) fits this exercise and is customer-friendly, but it
+  leaks: someone who redeemed points and then returned the purchase has effectively gotten the
+  reward "on credit," and if they never shop again the debt is never collected. A common
+  alternative — used by card programs like Apple Card Daily Cash and Amazon points — is to **bill
+  the cash value** of the points already spent, which closes the leak but requires real money
+  movement and a payment/refund integration (out of scope here, and outside a points-only system).
 - **Refunds keep the customer id in the path as a sanity/ownership check.** Since `purchase_id` is
   globally unique, the customer isn't strictly needed to find the purchase — but we verify the
   purchase belongs to that customer (mismatch → `404`). There's no requirement for it; we kept it
@@ -201,6 +208,11 @@ event; redemption and expiry are attributed to specific lots, which is what make
   reviewing the code.
 - **1 point per whole dollar**, fractional dollars dropped (`$10.99` → 10).
 - **Expiry boundary is exclusive** — a lot is active while `earned_at <= asOf < expires_at`.
+- **`expires_at` is stored, not derived.** It's always `earned_at + 12 months`, so it could be
+  computed on every read — but storing it trades a little space for simpler, faster queries (no date
+  math in each `WHERE`), and, as an ancillary benefit, lets an individual lot's expiry be *overridden*
+  (e.g. customer service extending points for an extenuating circumstance, or a promotion granting a
+  longer window) — which a hard-coded formula couldn't accommodate.
 - **Tier "spend" is counted in earned points** (≈ whole dollars), over the rolling 12 months.
 - **Unknown customer → balance `0`** — not distinguished from a genuine zero balance.
 - **Mutable lots over an append-only ledger** — the most significant trade-off, detailed next.
@@ -209,17 +221,14 @@ event; redemption and expiry are attributed to specific lots, which is what make
 
 I decrement `points_remaining` on each lot rather than keeping an immutable, signed event ledger.
 
-I explored the idea of using an append-only ledger - it intuitively seemed to offer
-a refund as "just a negative entry." However, experimentation with Claude
-showed that in a buy -> redeem -> return case, 
- **once a clawback exceeds what's left, the ledger also
-needs a special non-expiring negative entry**, making refunds a wash between the 
-two designs. With
-that neutralized, the ledger's only remaining edge is a richer audit trail 
-(which while attractive is out of scope), at the cost of a more complex 
-balance query on every read. Mutable lots is the simpler
-design that fully satisfies the requirements; in a scenario which didn't suggest
-a three-hour or so time box I'd likely lean more towards the ledger implementation.
+I explored the idea of using an append-only ledger — it intuitively seemed to offer a refund as
+"just a negative entry." However, experimentation with Claude showed that in a buy → redeem →
+return case, **once a clawback exceeds what's left, the ledger also needs a special non-expiring
+negative entry**, making refunds a wash between the two designs. With that neutralized, the
+ledger's only remaining edge is a richer audit trail (which, while attractive, is out of scope), at
+the cost of a more complex balance query on every read. Mutable lots is the simpler design that
+fully satisfies the requirements; in a scenario that didn't suggest a three-hour-or-so time-box,
+I'd likely lean more toward the ledger implementation.
 
 ### What I'd add with more time
 
