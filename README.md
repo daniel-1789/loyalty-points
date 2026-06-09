@@ -13,9 +13,9 @@ earned.
 - **Tier** (extended) — Silver / Gold / Platinum from rolling 12-month spend.
 - **Refunds** (extended) — reverse a purchase's points; the balance can go negative and is paid
   down by future earnings.
+- **CLI** (stretch) — a `points` command driving the same logic directly, no server required.
 
-Not yet built: a dedicated **CLI** (stretch) — though `scripts/loyalty.sh` covers manual
-interaction. See [Design](#design) for more.
+Everything in the brief (required + extended + stretch) is implemented. See [Design](#design).
 
 ## Tech stack
 
@@ -101,17 +101,34 @@ curl -X POST localhost:7070/customers/alice/redemptions \
   -d '{"rewardId":"free-coffee","date":"2025-06-01"}'
 ```
 
-## Convenience script
+## CLI (stretch)
 
-`scripts/loyalty.sh` wraps the API for manual experimentation (pretty-prints with `jq` if present):
+`scripts/points` is a command-line interface that drives the **same `LoyaltyService`** directly
+against the database — **no server needed** (build with `mvn package` first):
+
+```bash
+scripts/points earn    --user=alice --purchase-id=order-123 --amount=100 --date=2025-01-01
+scripts/points balance --user=alice --as-of=2025-06-01
+scripts/points redeem  --user=alice --reward=free-coffee --date=2025-06-01
+scripts/points refund  --user=alice --purchase-id=order-123 --date=2025-07-01
+scripts/points rewards
+scripts/points tiers
+```
+
+It shares all business logic with the REST API (the web layer and CLI are both thin shells over
+the service). Override the database with `LOYALTY_DB_URL`. Exit codes: `0` ok, `1` operation error
+(e.g. insufficient balance), `2` usage error.
+
+## HTTP convenience script
+
+`scripts/loyalty.sh` wraps the *running server's* API for manual experimentation (pretty-prints
+with `jq` if present):
 
 ```bash
 scripts/loyalty.sh earn alice order-1 100 2025-01-01
 scripts/loyalty.sh balance alice 2025-06-01
 scripts/loyalty.sh redeem alice free-coffee 2025-06-01
 scripts/loyalty.sh refund alice order-1 2025-07-01
-scripts/loyalty.sh rewards            # catalog
-scripts/loyalty.sh tiers              # thresholds
 scripts/loyalty.sh demo alice         # earns + balances showing points expire over time
 ```
 
@@ -180,7 +197,6 @@ design that fully satisfies the requirements; the ledger is the natural "with mo
 - **Flyway/Liquibase** migrations instead of hand-applied `schema.sql`.
 - **Idempotent earn replay** (return the existing lot) instead of `409`, for at-least-once delivery.
 - A connection pool (instead of a single shared connection) for real concurrency.
-- A dedicated **CLI** (the stretch goal); `scripts/loyalty.sh` currently covers manual use.
 
 ### AI tools
 
@@ -210,6 +226,7 @@ those apart into `model/` (data), `db/` (queries), and `service/` (logic) — th
 | `db/DataAccessException.java` | wrapping `django.db.Error` | So upper layers don't handle raw SQL exceptions. |
 | `model/*.java` | the field definitions of a Django model | Data only — the `.objects`/query part is moved to `db/`. |
 | `App.java` | `manage.py` + `wsgi.py` + `settings.py` | Entry point; the `Javalin.create(...)` block is settings (JSON config, request logging); `app.exception(...)` is the central exception→status mapping. |
+| `Cli.java` | a custom `manage.py` command (`BaseCommand`) | A second entry point over the same service — like a management command reusing your models/services. |
 | `resources/schema.sql` | migrations | Hand-written DDL instead of generated migration files. |
 | `resources/simplelogger.properties` | the `LOGGING` dict | Logging configuration. |
 
