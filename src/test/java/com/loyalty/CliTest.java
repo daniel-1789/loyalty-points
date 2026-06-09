@@ -88,6 +88,29 @@ class CliTest {
     }
 
     @Test
+    void malformedDateIsUsageErrorWithCleanMessage() {
+        int code = cli.run(new String[]{"balance", "--user=alice", "--as-of=not-a-date"});
+        assertEquals(2, code);
+        assertTrue(stderr().contains("must be an ISO date"), stderr());
+    }
+
+    @Test
+    void nonNumericAmountIsUsageErrorWithCleanMessage() {
+        int code = cli.run(new String[]{
+                "earn", "--user=alice", "--purchase-id=p1", "--amount=abc"});
+        assertEquals(2, code);
+        assertTrue(stderr().contains("must be a number"), stderr());
+    }
+
+    @Test
+    void invalidAmountFromServiceIsUsageError() {
+        int code = cli.run(new String[]{
+                "earn", "--user=alice", "--purchase-id=p1", "--amount=-5"});
+        assertEquals(2, code);
+        assertTrue(stderr().contains("greater than zero"), stderr());
+    }
+
+    @Test
     void rewardsListsCatalog() {
         assertEquals(0, cli.run(new String[]{"rewards"}));
         assertTrue(stdout().contains("free-coffee"), stdout());

@@ -8,14 +8,20 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Owns the SQLite connection and applies the schema on startup.
  *
- * <p>Holds a single long-lived {@link Connection}. SQLite serializes access internally, which is
- * sufficient for this application's modest concurrency; it also lets us use an in-memory database
- * for tests (an in-memory DB lives only as long as its connection is open). A production system
- * with real load would use a connection pool instead.
+ * <p>Holds a single long-lived {@link Connection}. Because a JDBC {@link Connection} is not safe
+ * for concurrent use — and {@link #transaction} toggles connection-wide autocommit — all access is
+ * serialized through {@link #lock}: writes via {@link #transaction}, reads via {@link #read}. That
+ * keeps concurrent HTTP requests from interleaving on the shared connection, at the cost of
+ * serializing DB access (fine for SQLite, which already allows only one writer). A production system
+ * with real load would use a connection pool (one connection per request) instead.
+ *
+ * <p>The single connection also lets tests use an in-memory database, which lives only as long as
+ * its connection is open.
  */
 public class Database implements AutoCloseable {
 
@@ -26,6 +32,9 @@ public class Database implements AutoCloseable {
 
     private final Connection connection;
 
+    /** Serializes all access to the single shared connection. Reentrant so reads/txns can't deadlock. */
+    private final ReentrantLock lock = new ReentrantLock();
+
     public Database(String jdbcUrl) {
         try {
             this.connection = DriverManager.getConnection(jdbcUrl);
@@ -34,6 +43,12 @@ public class Database implements AutoCloseable {
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to initialize database at " + jdbcUrl, e);
         }
+    }
+
+    /** Open the database from the LOYALTY_DB_URL env var, falling back to {@link #DEFAULT_URL}. */
+    public static Database fromEnv() {
+        String url = System.getenv("LOYALTY_DB_URL");
+        return new Database(url != null ? url : DEFAULT_URL);
     }
 
     /** The shared connection, handed to DAOs. */
@@ -47,27 +62,45 @@ public class Database implements AutoCloseable {
      * upsert the customer and insert the lot together; redeem: decrement several lots).
      */
     public <T> T transaction(java.util.function.Supplier<T> work) {
+        lock.lock();
         try {
-            connection.setAutoCommit(false);
-        } catch (SQLException e) {
-            throw new DataAccessException("Failed to begin transaction", e);
-        }
-        try {
-            T result = work.get();
-            connection.commit();
-            return result;
-        } catch (RuntimeException e) {
-            rollbackQuietly();
-            throw e;
-        } catch (SQLException e) {
-            rollbackQuietly();
-            throw new DataAccessException("Failed to commit transaction", e);
-        } finally {
             try {
-                connection.setAutoCommit(true);
-            } catch (SQLException ignored) {
-                // best effort; connection is closed on shutdown anyway
+                connection.setAutoCommit(false);
+            } catch (SQLException e) {
+                throw new DataAccessException("Failed to begin transaction", e);
             }
+            try {
+                T result = work.get();
+                connection.commit();
+                return result;
+            } catch (RuntimeException e) {
+                rollbackQuietly();
+                throw e;
+            } catch (SQLException e) {
+                rollbackQuietly();
+                throw new DataAccessException("Failed to commit transaction", e);
+            } finally {
+                try {
+                    connection.setAutoCommit(true);
+                } catch (SQLException ignored) {
+                    // best effort; connection is closed on shutdown anyway
+                }
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Run a read-only {@code work} block holding the connection lock, so reads don't race a
+     * concurrent {@link #transaction} on the shared connection.
+     */
+    public <T> T read(java.util.function.Supplier<T> work) {
+        lock.lock();
+        try {
+            return work.get();
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -81,11 +114,14 @@ public class Database implements AutoCloseable {
 
     /** Lightweight connectivity check for the health endpoint. */
     public boolean ping() {
+        lock.lock();
         try (Statement s = connection.createStatement();
              ResultSet rs = s.executeQuery("SELECT 1")) {
             return rs.next();
         } catch (SQLException e) {
             return false;
+        } finally {
+            lock.unlock();
         }
     }
 

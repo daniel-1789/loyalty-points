@@ -30,7 +30,7 @@ public class App {
     private static final int DEFAULT_PORT = 7070;
 
     public static void main(String[] args) {
-        Database db = new Database(databaseUrl());
+        Database db = Database.fromEnv();
         Javalin app = createApp(db);
         app.start(port());
     }
@@ -97,11 +97,6 @@ public class App {
     private static int port() {
         String fromEnv = System.getenv("PORT");
         return fromEnv == null ? DEFAULT_PORT : Integer.parseInt(fromEnv);
-    }
-
-    private static String databaseUrl() {
-        String fromEnv = System.getenv("LOYALTY_DB_URL");
-        return fromEnv == null ? Database.DEFAULT_URL : fromEnv;
     }
 
     /** Simple response body for the health check. */

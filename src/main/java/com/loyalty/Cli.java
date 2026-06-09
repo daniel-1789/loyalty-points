@@ -12,6 +12,7 @@ import com.loyalty.service.RefundResult;
 import java.io.PrintStream;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -36,10 +37,12 @@ public class Cli {
     }
 
     public static void main(String[] args) {
-        String url = System.getenv("LOYALTY_DB_URL");
-        try (Database db = new Database(url != null ? url : Database.DEFAULT_URL)) {
-            System.exit(new Cli(new LoyaltyService(db), System.out, System.err).run(args));
+        int code;
+        // close the DB before exiting — System.exit() inside the try would skip the implicit close().
+        try (Database db = Database.fromEnv()) {
+            code = new Cli(new LoyaltyService(db), System.out, System.err).run(args);
         }
+        System.exit(code);
     }
 
     /** Runs one command. Returns a process exit code: 0 ok, 1 operation error, 2 usage error. */
@@ -70,6 +73,11 @@ public class Cli {
             err.println(e.getMessage());
             printUsage(err);
             return 2;
+        } catch (IllegalArgumentException e) {
+            // Invalid input rejected by the service (e.g. amount <= 0) — a usage problem, like the
+            // web layer's 400. Distinct from a well-formed command that fails for a business reason.
+            err.println(e.getMessage());
+            return 2;
         } catch (RuntimeException e) {
             err.println("Error: " + e.getMessage());
             return 1;
@@ -80,7 +88,7 @@ public class Cli {
         EarnResult r = service.earn(
                 require(flags, "user"),
                 require(flags, "purchase-id"),
-                new BigDecimal(require(flags, "amount")),
+                requireAmount(flags, "amount"),
                 optionalDate(flags, "date"));
         out.printf("Earned %d points for %s (purchase %s); expires %s%n",
                 r.pointsEarned(), r.customerId(), r.purchaseId(), r.expiresAt());
@@ -141,9 +149,25 @@ public class Cli {
         return value;
     }
 
+    private static BigDecimal requireAmount(Map<String, String> flags, String key) {
+        String value = require(flags, key);
+        try {
+            return new BigDecimal(value);
+        } catch (NumberFormatException e) {
+            throw new UsageException("--" + key + " must be a number");
+        }
+    }
+
     private static LocalDate optionalDate(Map<String, String> flags, String key) {
         String value = flags.get(key);
-        return value == null ? null : LocalDate.parse(value);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(value);
+        } catch (DateTimeParseException e) {
+            throw new UsageException("--" + key + " must be an ISO date (YYYY-MM-DD)");
+        }
     }
 
     private void printUsage(PrintStream s) {

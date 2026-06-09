@@ -242,7 +242,9 @@ I'd likely lean more toward the ledger implementation.
   balance queries time-travel across redemptions/refunds, which mutable lots can't.
 - **Flyway/Liquibase** migrations instead of hand-applied `schema.sql`. As someone used to working in Django and SQLAlchemy in Python, this seems like it would be handy.
 - **Idempotent earn replay** (return the existing lot) instead of `409`, for at-least-once delivery.
-- A connection pool (instead of a single shared connection) for real concurrency.
+- A connection pool (one connection per request) instead of the single lock-serialized connection.
+  Access to the shared connection is currently serialized with a lock — correct, but it bottlenecks
+  all DB work through one connection; a pool (with SQLite WAL mode + a busy-timeout) would lift that.
 
 ### AI tools
 

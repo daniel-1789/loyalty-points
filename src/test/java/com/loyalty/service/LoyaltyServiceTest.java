@@ -11,6 +11,11 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -69,6 +74,13 @@ class LoyaltyServiceTest {
                 () -> service.earn("alice", "order-4", new BigDecimal("0"), LocalDate.of(2025, 1, 1)));
         assertThrows(IllegalArgumentException.class,
                 () -> service.earn("alice", "order-5", new BigDecimal("-5"), LocalDate.of(2025, 1, 1)));
+    }
+
+    @Test
+    void earnRejectsAmountTooLargeForInt() {
+        // Above Integer.MAX_VALUE: must be a clean validation error, not an ArithmeticException/500.
+        assertThrows(IllegalArgumentException.class,
+                () -> service.earn("alice", "order-big", new BigDecimal("9999999999"), LocalDate.of(2025, 1, 1)));
     }
 
     @Test
@@ -184,6 +196,39 @@ class LoyaltyServiceTest {
 
     private String tierOf(String customerId, LocalDate asOf) {
         return service.balance(customerId, asOf).tier();
+    }
+
+    @Test
+    void concurrentEarnsStayConsistent() throws InterruptedException {
+        // All operations share one DB connection; this exercises the serialization that keeps
+        // concurrent requests from interleaving on it. Each thread earns a distinct purchase.
+        int threads = 16;
+        int pointsEach = 10;
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        CountDownLatch start = new CountDownLatch(1);
+        CountDownLatch done = new CountDownLatch(threads);
+        AtomicInteger errors = new AtomicInteger();
+
+        for (int i = 0; i < threads; i++) {
+            final int n = i;
+            pool.submit(() -> {
+                try {
+                    start.await(); // line everyone up to maximize contention
+                    service.earn("alice", "order-" + n, new BigDecimal(pointsEach), LocalDate.of(2025, 1, 1));
+                } catch (Exception e) {
+                    errors.incrementAndGet();
+                } finally {
+                    done.countDown();
+                }
+            });
+        }
+        start.countDown();
+        done.await(10, TimeUnit.SECONDS);
+        pool.shutdown();
+
+        assertEquals(0, errors.get(), "no earn should fail under concurrency");
+        assertEquals(threads * pointsEach, service.balance("alice", LocalDate.of(2025, 6, 1)).balance());
+        assertEquals(threads, new PointLotDao(db.connection()).findByCustomer("alice").size());
     }
 
     @Test

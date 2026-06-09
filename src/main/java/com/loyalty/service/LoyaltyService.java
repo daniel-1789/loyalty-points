@@ -61,7 +61,11 @@ public class LoyaltyService {
             throw new IllegalArgumentException("amount must be greater than zero");
         }
 
-        int points = amount.setScale(0, RoundingMode.FLOOR).intValueExact();
+        BigDecimal flooredAmount = amount.setScale(0, RoundingMode.FLOOR);
+        if (flooredAmount.compareTo(BigDecimal.valueOf(Integer.MAX_VALUE)) > 0) {
+            throw new IllegalArgumentException("amount is too large");
+        }
+        int points = flooredAmount.intValueExact();
         LocalDate when = earnedAt != null ? earnedAt : LocalDate.now();
         LocalDate expires = when.plusMonths(EXPIRY_MONTHS);
 
@@ -101,22 +105,24 @@ public class LoyaltyService {
     public BalanceResponse balance(String customerId, LocalDate asOf) {
         requireText(customerId, "customerId");
         LocalDate when = asOf != null ? asOf : LocalDate.now();
-        int balance = pointLots.balance(customerId, when) - customers.getDebt(customerId);
-        int spend = pointLots.spendSince(customerId, when.minusMonths(TIER_WINDOW_MONTHS), when);
-        String tier = tiers.tierForSpend(spend);
-        log.debug("Balance for customer '{}' as of {} = {} (tier {}, {}-month spend {})",
-                customerId, when, balance, tier, TIER_WINDOW_MONTHS, spend);
-        return new BalanceResponse(customerId, balance, tier, spend, when);
+        return db.read(() -> {
+            int balance = netBalance(customerId, when);
+            int spend = pointLots.spendSince(customerId, when.minusMonths(TIER_WINDOW_MONTHS), when);
+            String tier = tiers.tierForSpend(spend);
+            log.debug("Balance for customer '{}' as of {} = {} (tier {}, {}-month spend {})",
+                    customerId, when, balance, tier, TIER_WINDOW_MONTHS, spend);
+            return new BalanceResponse(customerId, balance, tier, spend, when);
+        });
     }
 
     /** The full reward catalog. */
     public List<Reward> catalog() {
-        return rewards.findAll();
+        return db.read(rewards::findAll);
     }
 
     /** The configured tier thresholds. */
     public List<Tier> tierThresholds() {
-        return tiers.findAll();
+        return db.read(tiers::findAll);
     }
 
     /**
