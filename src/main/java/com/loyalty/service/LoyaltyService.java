@@ -168,7 +168,7 @@ public class LoyaltyService {
      * @throws AlreadyRefundedException  if the purchase was already refunded
      */
     public RefundResult refund(String customerId, String purchaseId, LocalDate asOf) {
-        requireText(customerId, "customerId");
+        requireText(customerId, "customerId");  /* technically we could have skipped this but want the security */
         requireText(purchaseId, "purchaseId");
         LocalDate when = asOf != null ? asOf : LocalDate.now();
 
