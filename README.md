@@ -1,8 +1,8 @@
 # Loyalty Points System
 
-Backend for a retail loyalty program: customers earn points on purchases, redeem them for
-rewards, and are assigned a tier based on spending — with points expiring 12 months after they're
-earned.
+Provides a backend for a retail loyalty program where customers earn points on purchases
+and can redeem them for rewards. Customers are assigned a tier based on spending. Points
+expire 12 months after they are earned.
 
 ## What's implemented
 
@@ -10,10 +10,11 @@ earned.
 - **Balance** — a customer's available (unexpired) points, with their tier.
 - **Redeem** — spend points on a reward from the catalog, consuming points closest to expiry first.
 - **Expiry** — points expire 12 months after they're earned and stop counting automatically.
-- **Tier** (extended) — Silver / Gold / Platinum from rolling 12-month spend.
-- **Refunds** (extended) — reverse a purchase's points; the balance can go negative and is paid
+- **Tier** (extended goal) — Silver / Gold / Platinum from rolling 12-month spend.
+- **Refunds** (extended goal) — reverse a purchase's points; the balance can go negative and is paid
   down by future earnings.
-- **CLI** (stretch) — a `points` command driving the same logic directly, no server required.
+- **CLI** (stretch goal) — a `points` command driving the same logic directly, no server required.
+- **Helper** — for testing purposes, developed `loyalty.sh` which sends `curl` commands directly to the server. Left it in as it proved very useful.
 
 Everything in the brief (required + extended + stretch) is implemented. See [Design](#design).
 
@@ -21,7 +22,7 @@ Everything in the brief (required + extended + stretch) is implemented. See [Des
 
 - **Java 21**
 - **[Javalin](https://javalin.io/)** — lightweight HTTP framework (embedded Jetty)
-- **SQLite** — embedded, file-based database (via `sqlite-jdbc`), plain JDBC (no ORM)
+- **SQLite** — embedded, file-based database (via `sqlite-jdbc`), plain JDBC (no ORM); easy in-memory version for testing
 - **Maven** — build tool
 - **JUnit 5** — tests (against an in-memory SQLite database)
 
@@ -148,8 +149,10 @@ deterministically — without touching the system clock.
 
 ### Data model
 
-Points are modeled as a **ledger of lots**. Every earn creates one immutable row capturing that
-event; redemption and expiry are attributed to specific lots, which is what makes both correct.
+Points are modeled as a **ledger of lots**. Every earn creates one row capturing that event; its
+earning facts (`points_earned`, `earned_at`, `expires_at`) never change, while `points_remaining`
+is drawn down as points are spent. Redemption and expiry are attributed to specific lots, which is
+what makes both correct.
 
 | Table | Purpose |
 |---|---|
@@ -177,7 +180,7 @@ event; redemption and expiry are attributed to specific lots, which is what make
 - **Refunds allow a negative balance that's self-healing.** A refund reverses a purchase's points
   and, for any portion already spent, records debt — so the balance can go negative. Rather than
   letting that debt linger or expire, the *next* points earned pay it down first. This is also the
-  anti-abuse property: you can't buy → redeem → return → wait it out.
+  anti-abuse property: you can't buy → redeem → return → wait it out. 
 - **Consequence of self-healing debt: no real-money recovery.** Keeping the clawback inside the
   points system (rather than touching money) fits this exercise and is customer-friendly, but it
   leaks: someone who redeemed points and then returned the purchase has effectively gotten the
@@ -189,23 +192,25 @@ event; redemption and expiry are attributed to specific lots, which is what make
   globally unique, the customer isn't strictly needed to find the purchase — but we verify the
   purchase belongs to that customer (mismatch → `404`). There's no requirement for it; we kept it
   instinctively as a guard, with the understanding that a real auth token would carry that identity
-  in production.
+  in production. Generally speaking, the brief is flexible on what to do with refunds, this seems a 
+  reasonable deliverable.
 - **Tier thresholds are arbitrary and data-driven.** Seeded Silver 0 / Gold 500 / Platinum 2500 in
   a table (not code/env), so they're changeable. Setting Silver at 0 means everyone has a tier; a
   non-zero Silver floor would be equally valid and would simply mean low spenders have *no* tier.
 - **Time is an explicit input (`asOf` / `date`), not a hidden `now()`.** Every operation takes an
   optional date, so history can be simulated and time-based behavior (expiry, rolling-window tiers)
-  tested deterministically — no clock manipulation.
+  tested deterministically — no clock manipulation. This also would allow a person joining a
+  loyalty program at a later date to have their history loaded.
 - **Tier reflects gross spend, not current balance.** It's based on `points_earned` over the
   trailing 12 months, so redeeming points never demotes a customer; only a refund (which un-does a
   purchase) reduces spend and can drop a tier.
 - **Deliberately lightweight stack — Javalin + hand-written SQL + SQLite — chosen for turnaround.**
   As someone whose day-to-day backend work is in Python, I favored a minimal, fully-explainable
   stack over a heavier one (Spring Boot / an ORM) so I could move quickly and understand every line
-  rather than fight framework magic within a ~3-hour box.
+  rather than fight framework magic within a ~3-hour time-box.
 - **No Docker — a simple local run.** `mvn package` then `java -jar` (or the CLI) keeps the barrier
   to running it low. Containerization would be the next step toward deployment but adds nothing for
-  reviewing the code.
+  reviewing the code. 
 - **1 point per whole dollar**, fractional dollars dropped (`$10.99` → 10).
 - **Expiry boundary is exclusive** — a lot is active while `earned_at <= asOf < expires_at`.
 - **`expires_at` is stored, not derived.** It's always `earned_at + 12 months`, so it could be
@@ -216,6 +221,7 @@ event; redemption and expiry are attributed to specific lots, which is what make
 - **Tier "spend" is counted in earned points** (≈ whole dollars), over the rolling 12 months.
 - **Unknown customer → balance `0`** — not distinguished from a genuine zero balance.
 - **Mutable lots over an append-only ledger** — the most significant trade-off, detailed next.
+- **Logging enabled** — provides a mechanism to diagnose activity without breakpoints/debugger
 
 ### A decision with a real trade-off: mutable lots vs. an append-only ledger
 
@@ -249,8 +255,8 @@ the AI to test various assumptions and possibilities.
 ## Django Translation
 
 For developers (like the author) more familiar with backend implementations in Python/Django,
-here's what each directory under `src/main/java/com/loyalty/` maps to. The concepts are the same;
-they're just split into more, smaller pieces. The biggest difference: Django's `Model` bundles the
+here's what each directory under `src/main/java/com/loyalty/` maps to. The concepts are similar,
+albeit split into more and smaller pieces. The biggest difference is that Django's `Model` bundles the
 data shape, the ORM/queries, and business logic together (Active Record), whereas this layout pulls
 those apart into `model/` (data), `db/` (queries), and `service/` (logic) — the Repository/DAO pattern.
 
