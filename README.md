@@ -118,7 +118,8 @@ scripts/points tiers
 
 It shares all business logic with the REST API (the web layer and CLI are both thin shells over
 the service). Override the database with `LOYALTY_DB_URL`. Exit codes: `0` ok, `1` operation error
-(e.g. insufficient balance), `2` usage error.
+(e.g. insufficient balance), `2` usage / invalid input (bad flags or values) — mirroring the web
+layer's split between business `4xx`s and `400`.
 
 ## HTTP convenience script
 
@@ -211,6 +212,10 @@ what makes both correct.
 - **No Docker — a simple local run.** `mvn package` then `java -jar` (or the CLI) keeps the barrier
   to running it low. Containerization would be the next step toward deployment but adds nothing for
   reviewing the code. 
+- **One DB connection, serialized with a lock.** A JDBC connection isn't safe for concurrent use,
+  and the transaction helper toggles connection-wide autocommit, so all DB access is guarded by a
+  single lock. For SQLite (one writer regardless) at this scope, serializing is correct and simple;
+  a connection pool is the throughput path (see *What I'd add*).
 - **1 point per whole dollar**, fractional dollars dropped (`$10.99` → 10).
 - **Expiry boundary is exclusive** — a lot is active while `earned_at <= asOf < expires_at`.
 - **`expires_at` is stored, not derived.** It's always `earned_at + 12 months`, so it could be
@@ -278,6 +283,6 @@ those apart into `model/` (data), `db/` (queries), and `service/` (logic) — th
 | `resources/schema.sql` | migrations | Hand-written DDL instead of generated migration files. |
 | `resources/simplelogger.properties` | the `LOGGING` dict | Logging configuration. |
 
-One more difference: Django auto-discovers apps, URLs, and models. Here, wiring is **explicit** — `App.createApp()`
-constructs the objects and hands them to the controller (constructor injection by hand). Spring Boot would
-restore the Django-like autowiring magic; this project keeps it explicit so there's no hidden behavior.
+Finally, Django auto-discovers apps, URLs, and models. In this project, the wiring is **explicit**, with `App.createApp()`
+constructing the objects and handing them to the controller. Spring Boot would
+restore the Django-like autowiring "magic"; this project keeps it explicit so there's no hidden behavior.
