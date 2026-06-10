@@ -36,6 +36,20 @@ pp() {
     fi
 }
 
+# Make a request and pretty-print the response. curl returns non-zero only for transport failures
+# (e.g. "couldn't connect"), so a non-zero exit means the server isn't reachable — fail loudly
+# instead of silently. HTTP error responses (400/404/...) still return 0, so their bodies show.
+request() {
+    local body status=0
+    body="$(curl -s "$@")" || status=$?
+    if (( status != 0 )); then
+        echo "Error: could not reach the loyalty server at $BASE_URL (curl exit $status)." >&2
+        echo "Is it running?  java -jar target/loyalty-points.jar   (or override with BASE_URL)" >&2
+        exit 1
+    fi
+    printf '%s' "$body" | pp
+}
+
 usage() {
     sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
@@ -49,15 +63,15 @@ earn() {
     else
         body=$(printf '{"purchaseId":"%s","amount":%s}' "$purchase" "$amount")
     fi
-    curl -s -X POST "$BASE_URL/customers/$user/purchases" \
-        -H 'Content-Type: application/json' -d "$body" | pp
+    request -X POST "$BASE_URL/customers/$user/purchases" \
+        -H 'Content-Type: application/json' -d "$body"
 }
 
 balance() {
     local user="$1" asof="${2:-}"
     local url="$BASE_URL/customers/$user/balance"
     [[ -n "$asof" ]] && url="$url?asOf=$asof"
-    curl -s "$url" | pp
+    request "$url"
 }
 
 redeem() {
@@ -68,15 +82,15 @@ redeem() {
     else
         body=$(printf '{"rewardId":"%s"}' "$reward")
     fi
-    curl -s -X POST "$BASE_URL/customers/$user/redemptions" \
-        -H 'Content-Type: application/json' -d "$body" | pp
+    request -X POST "$BASE_URL/customers/$user/redemptions" \
+        -H 'Content-Type: application/json' -d "$body"
 }
 
 refund() {
     local user="$1" purchase="$2" date="${3:-}"
     local url="$BASE_URL/customers/$user/purchases/$purchase/refund"
     [[ -n "$date" ]] && url="$url?asOf=$date"
-    curl -s -X POST "$url" | pp
+    request -X POST "$url"
 }
 
 # Self-contained walkthrough showing points accruing and then expiring over time.
@@ -98,9 +112,9 @@ cmd="${1:-}"
 [[ -n "$cmd" ]] && shift || true
 
 case "$cmd" in
-    health)  curl -s "$BASE_URL/health" | pp ;;
-    rewards) curl -s "$BASE_URL/rewards" | pp ;;
-    tiers)   curl -s "$BASE_URL/tiers" | pp ;;
+    health)  request "$BASE_URL/health" ;;
+    rewards) request "$BASE_URL/rewards" ;;
+    tiers)   request "$BASE_URL/tiers" ;;
     earn)    [[ $# -ge 3 ]] || usage 1; earn "$@" ;;
     balance) [[ $# -ge 1 ]] || usage 1; balance "$@" ;;
     redeem)  [[ $# -ge 2 ]] || usage 1; redeem "$@" ;;
